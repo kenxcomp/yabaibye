@@ -2,30 +2,12 @@ import Foundation
 import CoreGraphics
 
 public enum Layout {
-    // Balanced binary tiling, splitting each region along its longer axis.
+    // Three windows form columns; four form a 2 x 2 grid regardless of screen aspect.
     public static func frames(count: Int, in bounds: CGRect, gap: CGFloat = 10) -> [CGRect] {
-        guard count > 0, bounds.width > 0, bounds.height > 0 else { return [] }
-        let inset = max(0, min(gap, min(bounds.width, bounds.height) / 4))
-        return split(count, bounds.insetBy(dx: inset, dy: inset), gap: inset)
-    }
-    private static func split(_ count: Int, _ bounds: CGRect, gap: CGFloat) -> [CGRect] {
-        if count == 1 { return [bounds] }
-        let firstCount = (count + 1) / 2
-        let horizontal = bounds.width >= bounds.height
-        let length = horizontal ? bounds.width : bounds.height
-        let safeGap = min(gap, length / 4)
-        let firstLength = ((length - safeGap) * CGFloat(firstCount) / CGFloat(count)).rounded(.down)
-        var first = bounds, second = bounds
-        if horizontal {
-            first.size.width = firstLength
-            second.origin.x += firstLength + safeGap
-            second.size.width -= firstLength + safeGap
-        } else {
-            first.size.height = firstLength
-            second.origin.y += firstLength + safeGap
-            second.size.height -= firstLength + safeGap
-        }
-        return split(firstCount, first, gap: gap) + split(count - firstCount, second, gap: gap)
+        guard count > 0 else { return [] }
+        let ids = (0..<count).map(String.init)
+        let frames = TileLayout(ids: ids).frames(in: bounds, gap: gap)
+        return ids.compactMap { frames[$0] }
     }
     public static func neighbor(of index: Int, direction: Direction, frames: [CGRect]) -> Int? {
         guard frames.indices.contains(index) else { return nil }

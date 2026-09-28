@@ -11,7 +11,10 @@ import YabaibyeCore
     private var layoutTask: Task<Void, Never>?
     private var isLayingOut = false
     private var pendingCommand: Command?
-    private var orders: [UInt64: [String]] = [:]
+    private var layouts: [UInt64: TileLayout] = [:]
+    private var tiledWindows: [UInt64: [ManagedWindow]] = [:]
+    private var renderedLayouts: [UInt64: TileLayout] = [:]
+    private let drag = DragTiling()
     private var floating: [String: CGRect] = [:]
     private var originalFrames: [String: CGRect] = [:]
     private var signatures: [UInt64: String] = [:]
@@ -27,6 +30,9 @@ import YabaibyeCore
          focusedWindow: @escaping @MainActor () -> ManagedWindow? = { Windows.focused() }) {
         self.visibleWindows = visibleWindows; self.focusedWindow = focusedWindow
         hotkeys.onCommand = { [weak self] command in self?.execute(command) }
+        drag.capture = { [weak self] point in self?.captureDrag(at: point) }
+        drag.validate = { [weak self] context in self?.validateDrag(context) == true }
+        drag.commit = { [weak self] context, target, zone in self?.finishDrag(context, target: target, zone: zone) }
     }
     func start() throws {
         guard !enabled else { return }
@@ -37,6 +43,7 @@ import YabaibyeCore
         _ = try spaces.snapshot()
         try hotkeys.start()
         enabled = true
+        drag.start()
         UserDefaults.standard.set(true, forKey: "managerEnabled")
         timer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
@@ -45,6 +52,7 @@ import YabaibyeCore
         refresh(force: true)
     }
     func stop() {
+        drag.stop()
         task?.cancel(); task = nil
         layoutTask?.cancel(); pendingCommand = nil
         timer?.invalidate(); timer = nil
@@ -66,7 +74,7 @@ import YabaibyeCore
         }
     }
     func execute(_ command: Command) {
-        guard enabled, !busy else { return }
+        guard enabled, !busy, !drag.isTracking else { return }
         if isLayingOut { pendingCommand = command; return }
         guard AXIsProcessTrusted() else { stop(); report("辅助功能权限已撤销；管理已暂停。", error: true); return }
         busy = true
@@ -116,7 +124,7 @@ import YabaibyeCore
         }
     }
     func refresh(force: Bool = false) {
-        guard enabled, !busy, !isLayingOut else { return }
+        guard enabled, !busy, !isLayingOut, !drag.isTracking else { return }
         guard AXIsProcessTrusted() else { stop(); report("辅助功能权限已撤销。", error: true); return }
         guard !CGEventSource.buttonState(.combinedSessionState, button: .left), spaces.missionControl() == nil,
               let displays = try? spaces.snapshot() else { return }
@@ -128,19 +136,21 @@ import YabaibyeCore
             let members = windows.filter {
                 floating[$0.identity] == nil && spaces.memberships($0.id) == [display.current] && Windows.screen(for: $0.frame)?.displayID == screen.displayID
             }
-            let ids = Set(members.map(\.identity))
-            var order = (orders[display.current] ?? []).filter { ids.contains($0) }
-            order += members.map(\.identity).filter { !order.contains($0) }.sorted()
-            orders[display.current] = order
-            let signature = order.joined(separator: ",") + "@\(screen.axVisibleFrame)"
-            guard force || signatures[display.current] != signature else { continue }
-            let frames = Layout.frames(count: order.count, in: screen.axVisibleFrame)
-            for (index, id) in order.enumerated() {
-                guard let window = members.first(where: { $0.identity == id }) else { continue }
-                if originalFrames[id] == nil { originalFrames[id] = window.frame }
-                requests.append((window.element, frames[index]))
+            tiledWindows[display.current] = members
+            let ids = members.map(\.identity).sorted()
+            var layout = layouts[display.current] ?? TileLayout(ids: ids)
+            layout.reconcile(ids)
+            layouts[display.current] = layout
+            let signature = "\(screen.axVisibleFrame)"
+            guard force || renderedLayouts[display.current] != layout || signatures[display.current] != signature else { continue }
+            let frames = layout.frames(in: screen.axVisibleFrame)
+            for window in members {
+                guard let frame = frames[window.identity] else { continue }
+                if originalFrames[window.identity] == nil { originalFrames[window.identity] = window.frame }
+                requests.append((window.element, frame))
             }
             signatures[display.current] = signature
+            renderedLayouts[display.current] = layout
 
         }
         guard !requests.isEmpty else { return }
@@ -160,11 +170,39 @@ import YabaibyeCore
     private func swap(_ direction: Direction) throws {
         guard let window = self.focusedWindow(), floating[window.identity] == nil,
               let space = spaces.memberships(window.id).first,
-              var order = orders[space], let index = order.firstIndex(of: window.identity),
+              var layout = layouts[space], let index = layout.ids.firstIndex(of: window.identity),
               let screen = Windows.screen(for: window.frame) else { throw AppFailure("前台窗口不在平铺布局中。") }
-        let frames = Layout.frames(count: order.count, in: screen.axVisibleFrame)
+        let geometry = layout.frames(in: screen.axVisibleFrame)
+        let frames = layout.ids.compactMap { geometry[$0] }
         guard let next = Layout.neighbor(of: index, direction: direction, frames: frames) else { report("该方向没有平铺窗口"); return }
-        order.swapAt(index, next); orders[space] = order
+        layout.drop(window.identity, onto: layout.ids[next], zone: .center)
+        layouts[space] = layout
         report("已交换窗口位置")
+    }
+    private func captureDrag(at point: CGPoint) -> TileDragContext? {
+        guard enabled, !busy, !isLayingOut, AXIsProcessTrusted(), spaces.missionControl() == nil,
+              let window = focusedWindow(), floating[window.identity] == nil,
+              let space = spaces.memberships(window.id).first,
+              let members = tiledWindows[space], let source = members.first(where: { $0.identity == window.identity }),
+              source.frame.contains(point) else { return nil }
+        return TileDragContext(space: space, source: source, candidates: members)
+    }
+    private func validateDrag(_ context: TileDragContext) -> Bool {
+        guard enabled, !busy, !isLayingOut, AXIsProcessTrusted(), spaces.missionControl() == nil,
+              let display = try? spaces.snapshot().first(where: { $0.current == context.space }),
+              display.spaces.first(where: { $0.id == context.space })?.type == 0,
+              spaces.memberships(context.source.id) == [context.space],
+              let layout = layouts[context.space], Set(layout.ids) == Set(context.candidates.map(\.identity)) else { return false }
+        return context.candidates.allSatisfy { spaces.memberships($0.id) == [context.space] && AX.frame($0.element) != nil }
+    }
+    func finishDrag(_ context: TileDragContext, target: String?, zone: DropZone?) {
+        guard validateDrag(context) else { return }
+        if let target, let zone, var layout = layouts[context.space],
+           layout.drop(context.source.identity, onto: target, zone: zone) {
+            layouts[context.space] = layout
+            report(zone == .center ? "已交换窗口位置" : "已重新分区平铺")
+        }
+        // Dropping outside a tile returns the source to its existing tile.
+        refresh(force: true)
     }
 }

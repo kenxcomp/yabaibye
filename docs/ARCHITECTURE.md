@@ -1,6 +1,9 @@
 # 架构
 
-- `YabaibyeCore`：纯编号路由、物理键位映射、平铺几何与方向邻居选择，可单元测试。
+- `YabaibyeCore`：纯编号路由、物理键位映射、等权多叉分区树、落点区域与方向邻居选择。默认近方阵；删去源窗口后折叠空组，同轴分区合并，从而恢复等宽行列。
+- `DragTiling`：30Hz 观察鼠标左键状态及 AX 窗口位移；只有真实移动窗口时显示 `DropOverlay`，松手后提交布局。尺寸变化视为调整大小，不触发分割。只处理同一 Space 的平铺窗口；暂停、权限撤销、Space 切换、窗口消失时清理蒙版。
+- `DropOverlay`：不激活、不接收鼠标的 NSPanel，低饱和红色半透明底和斜向虚线；按 AX 顶部原点转为 AppKit 坐标。
+- `DragPractice`：三个隔离的原生测试窗口，使用相同管理器与拖拽流程，关闭任意一个就结束练习并恢复原来的管理状态。
 - `SpaceBridge`：Objective-C 桥接，动态解析 SkyLight / AX 窗口 ID，私有符号缺失时返回不可用，不因静态链接失败而崩溃。
 - `Spaces`：Space 快照、系统左右桌面快捷键、Mission Control AX 导航、可验证的 WindowManager 桥接移窗。macOS 27 的 `mc.display` 位于 WindowManager 根节点，旧版位于 Dock 的 `mc` 容器。包括超时、取消和指针恢复。
 - `Windows`：AX 标准窗口枚举，以 CG 可见列表 + 单 Space 归属过滤，排除桌面、弹窗、全屏和共享窗口。

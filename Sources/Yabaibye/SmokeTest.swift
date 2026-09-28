@@ -21,7 +21,7 @@ import YabaibyeCore
                 try hotkeys.start(); hotkeys.stop()
                 results.append("PASS：27 个全局快捷键注册 / 释放")
                 guard let screen = NSScreen.screens.first else { throw AppFailure("没有显示器") }
-                for i in 0..<2 {
+                for i in 0..<3 {
                     let window = NSWindow(contentRect: NSRect(x: screen.frame.minX + 140 + CGFloat(i) * 80, y: screen.frame.minY + 180, width: 480, height: 340),
                                           styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
                     window.title = "Yabaibye 自检 \(i + 1)"; window.isReleasedWhenClosed = false
@@ -33,8 +33,8 @@ import YabaibyeCore
                 let app = AXUIElementCreateApplication(getpid())
                 let elements = AX.value(app, kAXWindowsAttribute) as? [AXUIElement] ?? []
                 let managed = elements.compactMap { Windows.make($0, pid: getpid()) }.filter { candidate in windows.contains { UInt32($0.windowNumber) == candidate.id } }
-                guard managed.count == 2 else { throw AppFailure("无法读取自检窗口 AX 标识") }
-                let frames = Layout.frames(count: 2, in: screen.axVisibleFrame)
+                guard managed.count == 3 else { throw AppFailure("无法读取自检窗口 AX 标识") }
+                let frames = Layout.frames(count: 3, in: screen.axVisibleFrame)
                 for (i, window) in managed.enumerated() {
                     let accepted = try await AX.applyFrames([(window.element, frames[i])])
                     try await Task.sleep(nanoseconds: 200_000_000)
@@ -71,6 +71,23 @@ import YabaibyeCore
                         throw AppFailure("方向交换后的实际窗口位置不匹配")
                     }
                     results.append("PASS：平铺 / 浮动切换与方向交换命令")
+                    let row = managed.compactMap { Windows.make($0.element, pid: $0.pid) }.sorted { $0.frame.minX < $1.frame.minX }
+                    guard row.count == 3, let space = spaces.memberships(row[0].id).first else { throw AppFailure("拖拽分区测试缺少窗口") }
+                    fixtureManager.finishDrag(TileDragContext(space: space, source: row[0], candidates: row), target: row[1].identity, zone: .bottom)
+                    try await waitForIdle(fixtureManager)
+                    guard let a = AX.frame(row[0].element), let b = AX.frame(row[1].element), let c = AX.frame(row[2].element),
+                          abs(a.minX - b.minX) < 3, a.minY > b.minY, c.minX > b.minX,
+                          abs(a.width - c.width) < 3, abs(a.height - b.height) < 3 else { throw AppFailure("三列转左侧上下分区的实际位置不匹配") }
+                    let fresh = row.compactMap { Windows.make($0.element, pid: $0.pid) }
+                    fixtureManager.finishDrag(TileDragContext(space: space, source: fresh[0], candidates: fresh), target: fresh[2].identity, zone: .right)
+                    try await waitForIdle(fixtureManager)
+                    guard let lastA = AX.frame(row[0].element), let lastB = AX.frame(row[1].element), let lastC = AX.frame(row[2].element),
+                          lastB.minX < lastC.minX, lastC.minX < lastA.minX,
+                          abs(lastA.width - lastB.width) < 3, abs(lastB.width - lastC.width) < 3,
+                          abs(lastA.height - lastC.height) < 3, abs(lastB.height - lastC.height) < 3 else {
+                        throw AppFailure("嵌套分区恢复 B/C/A 等宽三列失败")
+                    }
+                    results.append("PASS：拖拽落点命令 III → 左侧 B/A → B/C/A 等宽三列（实际 AX 几何）")
                 }
                 for display in original {
                     guard let target = SpaceRouter.adjacent(1, display: display) ?? SpaceRouter.adjacent(-1, display: display) else {

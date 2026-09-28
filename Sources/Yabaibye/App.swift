@@ -62,6 +62,7 @@ import YabaibyeCore
         let login = add("登录时启动", to: menu, action: #selector(toggleLogin))
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         add("使用说明与快捷键…", to: menu, action: #selector(showHelp))
+        add("拖拽布局练习…", to: menu, action: #selector(runDragPractice))
         add("运行窗口与 Space 自检…", to: menu, action: #selector(runSmokeTest))
         add("复制诊断信息", to: menu, action: #selector(copyDiagnostics))
         menu.addItem(.separator())
@@ -72,7 +73,7 @@ import YabaibyeCore
         entry.target = self; menu.addItem(entry); return entry
     }
     @objc func toggle() {
-        guard smokeTest == nil else { manager.report("请等待自检结束"); return }
+        guard smokeTest == nil, practice == nil else { manager.report("请等待自检结束"); return }
         if manager.enabled { manager.stop() }
         else { do { try manager.start() } catch { showError(error) } }
     }
@@ -118,21 +119,39 @@ import YabaibyeCore
         let encoded = try? JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .sortedKeys])
         return encoded.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     }
+    private var practice: DragPractice?
+    private var resumeAfterPractice = false
+    @objc func runDragPractice() {
+        guard smokeTest == nil, practice == nil else { return }
+        let resume = manager.enabled
+        resumeAfterPractice = resume
+        manager.stop()
+        let practice = DragPractice(); self.practice = practice
+        do {
+            try practice.run { [weak self] in
+                guard let self else { return }
+                self.practice = nil
+                if resume { do { try self.manager.start() } catch { self.showError(error) } }
+            }
+        } catch { self.practice = nil; showError(error) }
+    }
     private var smokeTest: SmokeTest?
     @objc func runSmokeTest() {
-        guard smokeTest == nil else { return }
+        guard smokeTest == nil, practice == nil else { return }
         if manager.enabled { manager.stop() }
         let test = SmokeTest()
         smokeTest = test
         test.run { [weak self] report in
             self?.smokeTest = nil
+            UserDefaults.standard.set(report, forKey: "lastSmokeTestReport")
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "lastSmokeTestTime")
             let alert = NSAlert(); alert.messageText = "自检结果"; alert.informativeText = report
             if let self { self.showHelp(); alert.beginSheetModal(for: self.helpWindow!) }
         }
     }
     @objc func showHelp() {
         if let helpWindow { helpWindow.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 520), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 580), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Yabaibye"; window.isReleasedWhenClosed = false; window.center()
         let stack = NSStackView(); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 18
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -149,6 +168,7 @@ import YabaibyeCore
         buttons.addArrangedSubview(NSButton(title: "启用 / 暂停管理", target: self, action: #selector(toggle)))
         buttons.addArrangedSubview(NSButton(title: "运行窗口与 Space 自检", target: self, action: #selector(runSmokeTest)))
         stack.addArrangedSubview(buttons)
+        stack.addArrangedSubview(NSButton(title: "拖拽布局练习（仅测试窗口）", target: self, action: #selector(runDragPractice)))
         let status = NSTextField(wrappingLabelWithString: manager.status); status.textColor = .secondaryLabelColor
         helpStatus = status; stack.addArrangedSubview(status)
         window.contentView?.addSubview(stack)
@@ -164,7 +184,8 @@ import YabaibyeCore
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if CommandLine.arguments.contains("--diagnose") { return .terminateNow }
         // Give cancellation defers a main-run-loop turn to restore temporary accessibility settings.
-        let resume = manager.enabled
+        let resume = manager.enabled || (practice != nil && resumeAfterPractice)
+        practice?.finish()
         manager.stop()
         smokeTest?.cancel()
         UserDefaults.standard.set(resume, forKey: "managerEnabled")
