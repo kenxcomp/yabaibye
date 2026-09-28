@@ -1,0 +1,21 @@
+name: Feature request / 功能建议
+description: Suggest an improvement to your window-management workflow / 提出改进建议
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What workflow is difficult today? / 当前哪个使用场景不方便？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior / 希望如何改进？
+      description: "A concrete before/after example helps. / 可以描述改进前后的操作示例。"
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or extra context / 替代方案或补充信息

@@ -1,0 +1,43 @@
+name: Bug report / 问题反馈
+description: Report a window, Space, shortcut, or settings problem / 反馈功能问题
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: "English and Chinese are welcome. Please search existing issues first. / 支持中文或英文，请先搜索已有问题。"
+  - type: input
+    id: version
+    attributes:
+      label: Yabaibye version or commit / 版本或提交
+      placeholder: "0.1.0 / commit SHA"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and build / 系统版本与构建号
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: Display and window setup / 显示器与窗口环境
+      description: "Display count/scaling, separate Spaces, affected app/version, and custom shortcuts if relevant. / 屏幕数量与缩放、独立空间、相关应用版本及自定义快捷键。"
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      placeholder: "1. …\n2. …"
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior / 预期与实际表现
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Optional diagnostics or self-test results / 可选诊断与自检结果
+      description: "Share only relevant, reviewed details. Do not include private window contents or credentials. Keep SIP enabled. / 仅提供必要信息，勿包含私人窗口内容或凭据，无需关闭 SIP。"
