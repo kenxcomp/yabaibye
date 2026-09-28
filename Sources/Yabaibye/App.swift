@@ -37,6 +37,10 @@ import YabaibyeCore
             showHelp()
         }
     }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showHelp()
+        return true
+    }
     func menuWillOpen(_ menu: NSMenu) {
         menu.removeAllItems()
         statusItem = add(manager.status, to: menu)

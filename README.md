@@ -2,7 +2,7 @@
 
 原生 macOS 菜单栏窗口管理器，以保持 **SIP 开启**为设计目标。Swift + AppKit，内置快捷键，不依赖 yabai、skhd、Hammerspoon，也不向 Dock 注入代码。
 
-**0.1.0 开发预览**：原生 Space 操作使用未公开的 SkyLight 查询、WindowManager 移窗桥接接口和 Mission Control 辅助功能。它们不是 Apple 保证稳定的 API。请运行菜单里的自检；完整 SIP 环境的结果必须独立验证，不能用编译成功替代。
+**0.1.0 开发预览**：原生 Space 操作使用未公开的 SkyLight 查询、WindowManager 移窗桥接接口和 Mission Control 辅助功能。它们不是 Apple 保证稳定的 API。已在 macOS 27.2（26B5091g）、完整 SIP 开启、双屏环境通过窗口及 Space 自检，见[验证记录](docs/VALIDATION.md)。其他环境请运行菜单里的自检，不能用编译成功替代。
 
 ## 快捷键
 
