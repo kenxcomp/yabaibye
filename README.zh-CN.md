@@ -75,6 +75,8 @@ swift test
 
 本机构建默认使用临时签名，修改代码重签名后系统可能要求重新授权辅助功能。使用自己的稳定签名身份可设置 `YABAIBYE_SIGN_IDENTITY`，或在被 Git 忽略的 `.signing-identity` 文件中写入签名身份。尚未进行 Developer ID 公证；不提供绕过 Gatekeeper 的安装步骤。
 
+构建默认启用 Hardened Runtime 和默认库校验，并自动检查没有放宽运行时保护的 entitlement。可运行 `./script/verify_security.sh dist/Yabaibye.app` 复核；本地签名保护检查不等于 Apple 公证。
+
 其他开发入口：
 
 ```sh

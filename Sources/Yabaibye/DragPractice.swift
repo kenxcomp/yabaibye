@@ -28,7 +28,11 @@ import AppKit
             let root = AXUIElementCreateApplication(getpid())
             return (AX.value(root, kAXWindowsAttribute) as? [AXUIElement] ?? []).compactMap { Windows.make($0, pid: getpid()) }
                 .filter { item in self.windows.contains { UInt32($0.windowNumber) == item.id } }
-        }, persistLayouts: false)
+        }, focusedWindow: { [weak self] in
+            guard let self, let window = Windows.focused(), window.pid == getpid(),
+                  self.windows.contains(where: { UInt32($0.windowNumber) == window.id }) else { return nil }
+            return window
+        }, persistLayouts: false, allowedWindows: Set(windows.map { "\(getpid()):\($0.windowNumber)" }), registerHotkeys: false)
         self.manager = manager
         do { try manager.start() } catch { finish(); throw error }
     }

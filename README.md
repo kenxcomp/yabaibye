@@ -56,6 +56,8 @@ swift test
 
 This builds and opens `dist/Yabaibye.app`. First launch starts with window management paused. Source builds are the current installation path; there is no notarized public installer yet. The build script uses ad-hoc signing unless you configure your own stable signing identity. Rebuilding with a different identity can require Accessibility authorization again.
 
+Every bundle build enables Hardened Runtime with default library validation and checks that no runtime exception entitlements were added. You can repeat this check with `./script/verify_security.sh dist/Yabaibye.app`; this verifies local signing protection, not Apple notarization.
+
 ### Enable window management
 
 1. Open **Privacy & Security → Accessibility** in System Settings and allow **Yabaibye**. On the tested macOS 27.2 system, this permission page is labeled **Device Control and Data Access**.

@@ -38,7 +38,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<'PLIST'
 PLIST
 SIGN_IDENTITY="${YABAIBYE_SIGN_IDENTITY:-}"
 if [[ -z "$SIGN_IDENTITY" && -f .signing-identity ]]; then SIGN_IDENTITY="$(cat .signing-identity)"; fi
-codesign --force --sign "${SIGN_IDENTITY:--}" "$APP_BUNDLE"
+codesign --force --options runtime --sign "${SIGN_IDENTITY:--}" "$APP_BUNDLE"
+./script/verify_security.sh "$APP_BUNDLE"
 case "$MODE" in
   --build-only) echo "$APP_BUNDLE" ;;
   --diagnose) "$APP_BUNDLE/Contents/MacOS/Yabaibye" --diagnose ;;

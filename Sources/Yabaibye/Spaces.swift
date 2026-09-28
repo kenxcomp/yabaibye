@@ -22,7 +22,8 @@ import YabaibyeCore
         guard !displays.isEmpty else { throw AppFailure("系统返回的 Space 列表为空或格式已变更。") }
         return displays
     }
-    func memberships(_ id: UInt32) -> [UInt64] { (YBCopyWindowSpaces(id) ?? []).map(\.uint64Value) }
+    func checkedMemberships(_ id: UInt32) -> [UInt64]? { YBCopyWindowSpaces(id)?.map(\.uint64Value) }
+    func memberships(_ id: UInt32) -> [UInt64] { checkedMemberships(id) ?? [] }
     func screen(for display: DisplaySpaces) -> NSScreen? {
         NSScreen.screens.first { $0.uuid.caseInsensitiveCompare(display.uuid) == .orderedSame }
             ?? (display.uuid == "Main" ? NSScreen.screens.first : nil)

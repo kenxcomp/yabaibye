@@ -10,6 +10,7 @@ let package = Package(
         .target(name: "SpaceBridge", cSettings: [.unsafeFlags(["-fobjc-arc"])], linkerSettings: [.linkedFramework("AppKit")]),
         .executableTarget(name: "Yabaibye", dependencies: ["YabaibyeCore", "SpaceBridge"],
                           linkerSettings: [.linkedFramework("Carbon")]),
-        .testTarget(name: "YabaibyeCoreTests", dependencies: ["YabaibyeCore"])
+        .testTarget(name: "YabaibyeCoreTests", dependencies: ["YabaibyeCore"]),
+        .testTarget(name: "YabaibyeAppTests", dependencies: ["Yabaibye"])
     ]
 )

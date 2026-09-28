@@ -24,3 +24,12 @@
 
 - `ShortcutPreferences` / `ShortcutSettings`：28 项操作的可持久化物理键位与修饰键；先验证完整命令表及去重，再注册新组合，失败回滚旧注册。帮助页及放大菜单从当前配置生成。
 - `LayoutPersistence`：保存 Codable 分区树及 customized 标记，以显示器 UUID + Space ID 分区，boot UUID / loginwindow PID / UID 限定会话；只存窗口 PID/ID，不存窗口标题。刷新成员变化、拖拽、方向交换后保存。恢复后重算当前屏幕几何。练习不持久化，自检注入独立 UserDefaults suite，不覆盖用户布局。
+
+## 安全与失败恢复
+
+- 构建启用 Hardened Runtime，不添加运行时例外 entitlement；`verify_security.sh` 检查签名完整性、runtime 标志及例外，CI 构建也执行。使用系统框架，不允许任意第三方库注入；这不替代 Developer ID 公证。
+- `WindowSnapshot` 区分成功枚举、确认排除和读取失败。受影响显示器跳过本次布局协调及保存；Space 归属读取失败也跳过刷新，保留最后确认的分区。
+- `LayoutApplication` 仅在 AX 写入且实际几何核验成功后缓存已应用布局。失败或取消使缓存失效，同一请求按 1、2、4、8、15 秒退避重试；新布局和显式刷新可立即重试。
+- 放大窗口最小化、应用隐藏或进入原生全屏时，释放该 Space 的放大状态，让剩余窗口继续平铺。
+- 练习和自检管理器限制窗口身份集合及焦点来源，不注册全局快捷键、不改用户启用偏好；自检单独短暂验证快捷键注册后立即释放。
+- 只有通过单实例检查的主实例拥有退出清理和偏好保存责任；被拒绝的重复实例直接退出。

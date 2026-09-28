@@ -28,6 +28,7 @@ enum AX {
         return CGRect(origin: point, size: dimensions)
     }
     @MainActor static func applyFrames(_ requests: [(AXUIElement, CGRect)]) async throws -> Bool {
+        try Task.checkCancellation()
         var accepted = true
         var enhancedApps: [AXUIElement] = []
         var seenPIDs = Set<pid_t>()
@@ -97,6 +98,13 @@ struct ManagedWindow {
     var identity: String { "\(pid):\(id)" }
 }
 
+struct WindowSnapshot {
+    var windows: [ManagedWindow]
+    var complete = true
+    var unavailableDisplays: Set<CGDirectDisplayID> = []
+    func isReliable(on display: CGDirectDisplayID) -> Bool { complete && !unavailableDisplays.contains(display) }
+}
+
 @MainActor enum Windows {
     static func focused() -> ManagedWindow? {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
@@ -104,29 +112,69 @@ struct ManagedWindow {
         guard let element = AX.element(root, kAXFocusedWindowAttribute) else { return nil }
         return make(element, pid: app.processIdentifier)
     }
-    static func make(_ element: AXUIElement, pid: pid_t) -> ManagedWindow? {
-        guard AX.value(element, kAXSubroleAttribute) as? String == kAXStandardWindowSubrole,
-              AX.value(element, kAXMinimizedAttribute) as? Bool != true,
-              AX.value(element, "AXFullScreen") as? Bool != true,
-              let frame = AX.frame(element), frame.width > 80, frame.height > 60 else { return nil }
-        var settable = DarwinBoolean(false)
-        guard AXUIElementIsAttributeSettable(element, kAXSizeAttribute as CFString, &settable) == .success, settable.boolValue else { return nil }
-        let id = YBWindowID(element)
-        guard id != 0 else { return nil }
-        return ManagedWindow(id: id, pid: pid, element: element, frame: frame)
+    enum Inspection {
+        case managed(ManagedWindow), excluded, unavailable
     }
-    static func visible() -> [ManagedWindow] {
-        let records = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], 0) as? [[String: Any]] ?? []
-        let ids = Set(records.filter { ($0[kCGWindowLayer as String] as? Int) == 0 }.compactMap { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value })
-        let pids = Set(records.filter { ($0[kCGWindowLayer as String] as? Int) == 0 }.compactMap { $0[kCGWindowOwnerPID as String] as? Int32 })
-        return NSWorkspace.shared.runningApplications.filter {
-            pids.contains($0.processIdentifier) && $0.activationPolicy == .regular && !$0.isHidden && $0.processIdentifier != getpid()
-        }.flatMap { app -> [ManagedWindow] in
+    static func make(_ element: AXUIElement, pid: pid_t) -> ManagedWindow? {
+        if case .managed(let window) = inspect(element, pid: pid) { return window }
+        return nil
+    }
+    static func inspect(_ element: AXUIElement, pid: pid_t) -> Inspection {
+        guard let subrole = AX.value(element, kAXSubroleAttribute) as? String else { return .unavailable }
+        guard subrole == kAXStandardWindowSubrole else { return .excluded }
+        guard let minimized = AX.value(element, kAXMinimizedAttribute) as? Bool else { return .unavailable }
+        if minimized { return .excluded }
+        // AXFullScreen is optional, but messaging failure is not evidence of an ordinary window.
+        var fullScreen: CFTypeRef?
+        let fullScreenStatus = AXUIElementCopyAttributeValue(element, "AXFullScreen" as CFString, &fullScreen)
+        guard fullScreenStatus == .success || fullScreenStatus == .attributeUnsupported || fullScreenStatus == .noValue else { return .unavailable }
+        if fullScreen as? Bool == true { return .excluded }
+        guard let frame = AX.frame(element) else { return .unavailable }
+        guard frame.width > 80, frame.height > 60 else { return .excluded }
+        var settable = DarwinBoolean(false)
+        guard AXUIElementIsAttributeSettable(element, kAXSizeAttribute as CFString, &settable) == .success else { return .unavailable }
+        guard settable.boolValue else { return .excluded }
+        let id = YBWindowID(element)
+        guard id != 0 else { return .unavailable }
+        return .managed(ManagedWindow(id: id, pid: pid, element: element, frame: frame))
+    }
+    static func visible() -> [ManagedWindow] { snapshot().windows }
+    static func snapshot() -> WindowSnapshot {
+        guard let records = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], 0) as? [[String: Any]] else {
+            return WindowSnapshot(windows: [], complete: false)
+        }
+        let normal = records.filter { ($0[kCGWindowLayer as String] as? Int) == 0 }
+        let ids = Set(normal.compactMap { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value })
+        let pids = Set(normal.compactMap { $0[kCGWindowOwnerPID as String] as? Int32 })
+        var result = WindowSnapshot(windows: [])
+        func unavailable(_ pid: pid_t) {
+            for record in normal where record[kCGWindowOwnerPID as String] as? Int32 == pid {
+                guard let bounds = record[kCGWindowBounds as String] as? [String: Any],
+                      let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary), let display = screen(for: rect) else {
+                    result.complete = false; continue
+                }
+                result.unavailableDisplays.insert(display.displayID)
+            }
+        }
+        for app in NSWorkspace.shared.runningApplications where
+            pids.contains(app.processIdentifier) && app.activationPolicy == .regular && !app.isHidden && app.processIdentifier != getpid() {
             let root = AXUIElementCreateApplication(app.processIdentifier)
             AXUIElementSetMessagingTimeout(root, 0.25)
-            let windows = AX.value(root, kAXWindowsAttribute) as? [AXUIElement] ?? []
-            return windows.compactMap { make($0, pid: app.processIdentifier) }.filter { ids.contains($0.id) }
+            guard let elements = AX.value(root, kAXWindowsAttribute) as? [AXUIElement], !elements.isEmpty else {
+                unavailable(app.processIdentifier); continue
+            }
+            for element in elements {
+                // Windows on other Spaces are irrelevant to this visible snapshot.
+                let id = YBWindowID(element)
+                if id != 0 && !ids.contains(id) { continue }
+                switch inspect(element, pid: app.processIdentifier) {
+                case .managed(let window): if ids.contains(window.id) { result.windows.append(window) }
+                case .excluded: break
+                case .unavailable: unavailable(app.processIdentifier)
+                }
+            }
         }
+        return result
     }
     static func screen(for rect: CGRect) -> NSScreen? {
         NSScreen.screens.max { intersectionArea($0.axFrame, rect) < intersectionArea($1.axFrame, rect) }

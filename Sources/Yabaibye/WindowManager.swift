@@ -15,7 +15,7 @@ import YabaibyeCore
     private var persistence: LayoutPersistence?
     private var layoutDisplays: [UInt64: String] = [:]
     private var tiledWindows: [UInt64: [ManagedWindow]] = [:]
-    private var renderedLayouts: [UInt64: TileLayout] = [:]
+    private var applications: [UInt64: LayoutApplication] = [:]
     private let drag = DragTiling()
     private struct ZoomedWindow {
         let window: ManagedWindow
@@ -24,18 +24,29 @@ import YabaibyeCore
     private var zoomed: [UInt64: ZoomedWindow] = [:]
     private var floating: [String: CGRect] = [:]
     private var originalFrames: [String: CGRect] = [:]
-    private var signatures: [UInt64: String] = [:]
+
     private(set) var enabled = false
     private(set) var busy = false
     private(set) var status = "已暂停"
     var changed: (() -> Void)?
 
-    private let visibleWindows: @MainActor () -> [ManagedWindow]
-    private let focusedWindow: @MainActor () -> ManagedWindow?
+    private let snapshotProvider: @MainActor () -> WindowSnapshot
+    private let rawFocusedWindow: @MainActor () -> ManagedWindow?
+    private let allowedWindows: Set<String>?
+    private let registerHotkeys: Bool
+    private let managesUserPreferences: Bool
+    private let applyFrames: @MainActor ([(AXUIElement, CGRect)]) async throws -> Bool
+    func focusedWindow() -> ManagedWindow? {
+        guard let window = rawFocusedWindow(), allowedWindows?.contains(window.identity) ?? true else { return nil }
+        return window
+    }
     var isIdle: Bool { !busy && !isLayingOut }
-    init(visibleWindows: @escaping @MainActor () -> [ManagedWindow] = { Windows.visible() },
+    init(visibleWindows: (@MainActor () -> [ManagedWindow])? = nil,
          focusedWindow: @escaping @MainActor () -> ManagedWindow? = { Windows.focused() },
-         persistLayouts: Bool = true, layoutStore: LayoutPersistence? = nil) {
+         persistLayouts: Bool = true, layoutStore: LayoutPersistence? = nil,
+         snapshotProvider: (@MainActor () -> WindowSnapshot)? = nil,
+         allowedWindows: Set<String>? = nil, registerHotkeys: Bool = true,
+         applyFrames: @escaping @MainActor ([(AXUIElement, CGRect)]) async throws -> Bool = { try await AX.applyFrames($0) }) {
         persistence = layoutStore
         if persistLayouts, layoutStore == nil {
             // Scope WindowServer identities to this boot and loginwindow process.
@@ -46,7 +57,10 @@ import YabaibyeCore
             let login = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.loginwindow").first?.processIdentifier
             if valid, let login { persistence = LayoutPersistence(session: "\(String(cString: buffer)):\(getuid()):\(login)") }
         }
-        self.visibleWindows = visibleWindows; self.focusedWindow = focusedWindow
+        self.snapshotProvider = snapshotProvider ?? visibleWindows.map { provider in { WindowSnapshot(windows: provider()) } } ?? { Windows.snapshot() }
+        self.rawFocusedWindow = focusedWindow
+        self.allowedWindows = allowedWindows; self.registerHotkeys = registerHotkeys
+        self.managesUserPreferences = persistLayouts; self.applyFrames = applyFrames
         hotkeys.onCommand = { [weak self] command in self?.execute(command) }
         drag.capture = { [weak self] point in self?.captureDrag(at: point) }
         drag.validate = { [weak self] context in self?.validateDrag(context) == true }
@@ -80,10 +94,10 @@ import YabaibyeCore
         let conflicts = Self.conflicts()
         guard conflicts.isEmpty else { throw AppFailure("请先停止 \(conflicts.joined(separator: "、"))，避免同时管理窗口。") }
         _ = try spaces.snapshot()
-        try hotkeys.start()
+        if registerHotkeys { try hotkeys.start() }
         enabled = true
         drag.start()
-        UserDefaults.standard.set(true, forKey: "managerEnabled")
+        if managesUserPreferences { UserDefaults.standard.set(true, forKey: "managerEnabled") }
         timer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
@@ -96,7 +110,7 @@ import YabaibyeCore
         layoutTask?.cancel(); pendingCommand = nil
         timer?.invalidate(); timer = nil
         hotkeys.stop(); enabled = false
-        UserDefaults.standard.set(false, forKey: "managerEnabled")
+        if managesUserPreferences { UserDefaults.standard.set(false, forKey: "managerEnabled") }
         report("已暂停")
     }
     func report(_ message: String, error: Bool = false) {
@@ -121,6 +135,7 @@ import YabaibyeCore
             guard let self else { return }
             defer { self.busy = false; self.refresh(force: true) }
             do {
+                try Task.checkCancellation()
                 let displays = try self.spaces.snapshot()
                 switch command {
                 case .focusSpace(let number), .moveToSpace(let number):
@@ -194,29 +209,48 @@ import YabaibyeCore
         guard AXIsProcessTrusted() else { stop(); report("辅助功能权限已撤销。", error: true); return }
         guard !CGEventSource.buttonState(.combinedSessionState, button: .left), spaces.missionControl() == nil,
               let displays = try? spaces.snapshot() else { return }
-        let windows = visibleWindows()
+        let snapshot = snapshotProvider()
+        guard snapshot.complete else { return }
+        let windows = snapshot.windows.filter { allowedWindows?.contains($0.identity) ?? true }
+        var memberships: [UInt32: [UInt64]] = [:]
+        // A failed Space lookup must never be interpreted as a window leaving its tile.
+        for window in windows {
+            guard let values = spaces.checkedMemberships(window.id), !values.isEmpty else { return }
+            memberships[window.id] = values
+        }
         let spacing = LayoutSpacing.load()
-        var requests: [(AXUIElement, CGRect)] = []
+        struct Batch {
+            let space: UInt64
+            let layout: TileLayout?
+            let signature: String
+            let requests: [(AXUIElement, CGRect)]
+        }
+        var batches: [Batch] = []
         for display in displays {
             guard display.spaces.first(where: { $0.id == display.current })?.type == 0,
-                  let screen = spaces.screen(for: display) else { continue }
+                  let screen = spaces.screen(for: display), snapshot.isReliable(on: screen.displayID) else { continue }
             if let zoom = zoomed[display.current] {
                 let source = zoom.window
-                if spaces.memberships(source.id) == [display.current], let frame = AX.frame(source.element),
-                   Windows.screen(for: frame)?.displayID == screen.displayID {
-                    if AX.value(source.element, kAXMinimizedAttribute) as? Bool != true,
-                       AX.value(source.element, "AXFullScreen") as? Bool != true,
-                       (abs(frame.minX - screen.axVisibleFrame.minX) > 3 || abs(frame.minY - screen.axVisibleFrame.minY) > 3 ||
-                        abs(frame.width - screen.axVisibleFrame.width) > 3 || abs(frame.height - screen.axVisibleFrame.height) > 3) {
-                        requests.append((source.element, screen.axVisibleFrame))
+                let minimized = AX.value(source.element, kAXMinimizedAttribute) as? Bool
+                let hidden = NSRunningApplication(processIdentifier: source.pid)?.isHidden == true
+                let fullscreen = AX.value(source.element, "AXFullScreen") as? Bool == true
+                if minimized == true || hidden || fullscreen {
+                    zoomed.removeValue(forKey: display.current)
+                    applications.removeValue(forKey: display.current)
+                } else if let frame = AX.frame(source.element), memberships[source.id] == [display.current],
+                          Windows.screen(for: frame)?.displayID == screen.displayID {
+                    if abs(frame.minX - screen.axVisibleFrame.minX) > 3 || abs(frame.minY - screen.axVisibleFrame.minY) > 3 ||
+                        abs(frame.width - screen.axVisibleFrame.width) > 3 || abs(frame.height - screen.axVisibleFrame.height) > 3 {
+                        batches.append(Batch(space: display.current, layout: nil, signature: "", requests: [(source.element, screen.axVisibleFrame)]))
                     }
                     continue
+                } else {
+                    zoomed.removeValue(forKey: display.current)
+                    applications.removeValue(forKey: display.current)
                 }
-                zoomed.removeValue(forKey: display.current)
-                signatures.removeValue(forKey: display.current)
             }
             let members = windows.filter {
-                floating[$0.identity] == nil && spaces.memberships($0.id) == [display.current] && Windows.screen(for: $0.frame)?.displayID == screen.displayID
+                floating[$0.identity] == nil && memberships[$0.id] == [display.current] && Windows.screen(for: $0.frame)?.displayID == screen.displayID
             }
             tiledWindows[display.current] = members
             let ids = members.map(\.identity).sorted()
@@ -226,18 +260,23 @@ import YabaibyeCore
             layouts[display.current] = layout
             persist(display.current)
             let signature = "\(screen.axVisibleFrame)@\(spacing.padding):\(spacing.gap)"
-            guard force || renderedLayouts[display.current] != layout || signatures[display.current] != signature else { continue }
+            guard applications[display.current, default: LayoutApplication()].needsApply(layout, signature: signature,
+                        now: Date.timeIntervalSinceReferenceDate, force: force) else { continue }
+            var requests: [(AXUIElement, CGRect)] = []
             let frames = layout.frames(in: screen.axVisibleFrame, gap: CGFloat(spacing.gap), padding: CGFloat(spacing.padding))
             for window in members {
                 guard let frame = frames[window.identity] else { continue }
                 if originalFrames[window.identity] == nil { originalFrames[window.identity] = window.frame }
                 requests.append((window.element, frame))
             }
-            signatures[display.current] = signature
-            renderedLayouts[display.current] = layout
+            if requests.isEmpty {
+                applications[display.current, default: LayoutApplication()].succeeded(layout, signature: signature)
+            } else {
+                batches.append(Batch(space: display.current, layout: layout, signature: signature, requests: requests))
+            }
 
         }
-        guard !requests.isEmpty else { return }
+        guard !batches.isEmpty else { return }
         isLayingOut = true
         layoutTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -245,10 +284,30 @@ import YabaibyeCore
                 self.isLayingOut = false
                 if let command = self.pendingCommand { self.pendingCommand = nil; self.execute(command) }
             }
-            do {
-                if try await !AX.applyFrames(requests) { self.report("部分窗口有尺寸限制或拒绝调整；可将其设为浮动。", error: true) }
-            } catch is CancellationError { }
-            catch { self.report(error.localizedDescription, error: true) }
+            for batch in batches {
+                do {
+                    try Task.checkCancellation()
+                    let accepted = try await self.applyFrames(batch.requests)
+                    try Task.checkCancellation()
+                    guard self.enabled else { return }
+                    if let layout = batch.layout {
+                        if accepted {
+                            self.applications[batch.space, default: LayoutApplication()].succeeded(layout, signature: batch.signature)
+                        } else {
+                            var state = self.applications[batch.space, default: LayoutApplication()]
+                            state.failed(layout, signature: batch.signature, now: Date.timeIntervalSinceReferenceDate)
+                            self.applications[batch.space] = state
+                            if state.failureCount == 1 { self.report("部分窗口暂时拒绝调整；将延迟重试，尺寸受限的窗口可设为浮动。", error: true) }
+                        }
+                    }
+                } catch {
+                    if let layout = batch.layout {
+                        self.applications[batch.space, default: LayoutApplication()].failed(layout, signature: batch.signature, now: Date.timeIntervalSinceReferenceDate)
+                    }
+                    if error is CancellationError { return }
+                    self.report(error.localizedDescription, error: true)
+                }
+            }
         }
     }
     private func restoreZoom(for window: ManagedWindow) async throws {
@@ -257,7 +316,7 @@ import YabaibyeCore
             throw AppFailure("窗口暂时无法恢复原尺寸，请重试。")
         }
         zoomed.removeValue(forKey: entry.key)
-        signatures.removeValue(forKey: entry.key)
+        applications.removeValue(forKey: entry.key)
     }
     private func swap(_ direction: Direction) throws {
         guard let window = self.focusedWindow(), floating[window.identity] == nil,

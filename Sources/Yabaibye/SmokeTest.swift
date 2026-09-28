@@ -23,7 +23,7 @@ import YabaibyeCore
                 guard let screen = NSScreen.screens.first else { throw AppFailure("没有显示器") }
                 for i in 0..<3 {
                     let window = NSWindow(contentRect: NSRect(x: screen.frame.minX + 140 + CGFloat(i) * 80, y: screen.frame.minY + 180, width: 480, height: 340),
-                                          styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+                                          styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
                     window.title = "Yabaibye 自检 \(i + 1)"; window.isReleasedWhenClosed = false
                     window.contentView = NSTextField(labelWithString: "仅用于自检，测试结束后自动关闭。")
                     window.makeKeyAndOrderFront(nil); windows.append(window)
@@ -48,13 +48,34 @@ import YabaibyeCore
                 let suiteName = "Yabaibye.LayoutSelfTest.\(UUID().uuidString)"
                 let testDefaults = UserDefaults(suiteName: suiteName)!
                 defer { testDefaults.removePersistentDomain(forName: suiteName) }
+                var unavailableSnapshot = false
+                var failFirstApply = true
+                var applyAttempts = 0
                 let fixtureManager = WindowManager(visibleWindows: {
                     managed.compactMap { Windows.make($0.element, pid: $0.pid) }
-                }, focusedWindow: { Windows.make(managed[0].element, pid: managed[0].pid) }, persistLayouts: false, layoutStore: LayoutPersistence(session: "test", defaults: testDefaults))
+                }, focusedWindow: { Windows.make(managed[0].element, pid: managed[0].pid) }, persistLayouts: false, layoutStore: LayoutPersistence(session: "test", defaults: testDefaults), snapshotProvider: {
+                    let current = managed.compactMap { Windows.make($0.element, pid: $0.pid) }
+                    return unavailableSnapshot
+                        ? WindowSnapshot(windows: Array(current.dropFirst()), unavailableDisplays: [screen.displayID])
+                        : WindowSnapshot(windows: current)
+                }, allowedWindows: Set(managed.map(\.identity)), registerHotkeys: false, applyFrames: { requests in
+                    applyAttempts += 1
+                    if failFirstApply { failFirstApply = false; return false }
+                    return try await AX.applyFrames(requests)
+                })
                 do {
                     defer { fixtureManager.stop() }
                     try fixtureManager.start()
                     try await waitForIdle(fixtureManager)
+                    guard applyAttempts == 1 else { throw AppFailure("未触发模拟调整失败") }
+                    fixtureManager.refresh()
+                    try await waitForIdle(fixtureManager)
+                    guard applyAttempts == 1 else { throw AppFailure("调整失败后未遵守重试间隔") }
+                    try await Task.sleep(nanoseconds: 1_100_000_000)
+                    fixtureManager.refresh()
+                    try await waitForIdle(fixtureManager)
+                    guard applyAttempts >= 2 else { throw AppFailure("失败布局被错误缓存，未进行重试") }
+                    results.append("PASS：模拟 AX 调整失败后延迟重试，成功前不缓存布局")
                     let beforeZoom = managed.map { AX.frame($0.element) }
                     fixtureManager.execute(.toggleZoom)
                     try await waitForIdle(fixtureManager)
@@ -93,10 +114,27 @@ import YabaibyeCore
                     guard let a = AX.frame(row[0].element), let b = AX.frame(row[1].element), let c = AX.frame(row[2].element),
                           abs(a.minX - b.minX) < 3, a.minY > b.minY, c.minX > b.minX,
                           abs(a.width - c.width) < 3, abs(a.height - b.height) < 3 else { throw AppFailure("三列转左侧上下分区的实际位置不匹配") }
+                    let savedPartition = LayoutPersistence(session: "test", defaults: testDefaults).layout(display: screen.uuid, space: space)
+                    guard savedPartition != nil else { throw AppFailure("未找到自检保存的分区") }
+                    unavailableSnapshot = true
+                    fixtureManager.refresh(force: true)
+                    try await waitForIdle(fixtureManager)
+                    guard LayoutPersistence(session: "test", defaults: testDefaults).layout(display: screen.uuid, space: space) == savedPartition else {
+                        throw AppFailure("不完整快照覆盖了保存的分区")
+                    }
+                    unavailableSnapshot = false
+                    fixtureManager.refresh(force: true)
+                    try await waitForIdle(fixtureManager)
+                    for (window, expected) in zip(row, [a, b, c]) {
+                        guard let frame = AX.frame(window.element), abs(frame.minX - expected.minX) < 3,
+                              abs(frame.minY - expected.minY) < 3, abs(frame.width - expected.width) < 3,
+                              abs(frame.height - expected.height) < 3 else { throw AppFailure("读取失败后恢复时丢失分区") }
+                    }
+                    results.append("PASS：模拟窗口缺席且快照失败，保存分区及恢复后 AX 几何保持")
                     fixtureManager.stop()
                     let restarted = WindowManager(visibleWindows: {
                         managed.compactMap { Windows.make($0.element, pid: $0.pid) }
-                    }, persistLayouts: false, layoutStore: LayoutPersistence(session: "test", defaults: UserDefaults(suiteName: suiteName)!))
+                    }, focusedWindow: { Windows.make(managed[0].element, pid: managed[0].pid) }, persistLayouts: false, layoutStore: LayoutPersistence(session: "test", defaults: UserDefaults(suiteName: suiteName)!), allowedWindows: Set(managed.map(\.identity)), registerHotkeys: false)
                     do {
                         defer { restarted.stop() }
                         try restarted.start()
@@ -120,6 +158,32 @@ import YabaibyeCore
                         throw AppFailure("嵌套分区恢复 B/C/A 等宽三列失败")
                     }
                     results.append("PASS：拖拽落点命令 III → 左侧 B/A → B/C/A 等宽三列（实际 AX 几何）")
+                    fixtureManager.execute(.toggleZoom)
+                    try await waitForIdle(fixtureManager)
+                    guard let zoomWindow = windows.first(where: { UInt32($0.windowNumber) == managed[0].id }) else { throw AppFailure("找不到最小化测试窗口") }
+                    zoomWindow.miniaturize(nil)
+                    try await Task.sleep(nanoseconds: 500_000_000)
+                    guard zoomWindow.isMiniaturized, AX.value(managed[0].element, kAXMinimizedAttribute) as? Bool == true else {
+                        throw AppFailure("测试窗口未实际进入最小化状态")
+                    }
+                    fixtureManager.refresh(force: true)
+                    try await waitForIdle(fixtureManager)
+                    let spacing = LayoutSpacing.load()
+                    let expectedRemaining = TileLayout(ids: managed.dropFirst().map(\.identity)).frames(in: screen.axVisibleFrame, gap: CGFloat(spacing.gap), padding: CGFloat(spacing.padding))
+                    for window in managed.dropFirst() {
+                        guard let frame = AX.frame(window.element), let expected = expectedRemaining[window.identity],
+                              abs(frame.width - expected.width) < 3, abs(frame.height - expected.height) < 3 else {
+                            throw AppFailure("放大窗口最小化后，其余窗口仍未恢复平铺：实际=\(String(describing: AX.frame(window.element)))，目标=\(String(describing: expectedRemaining[window.identity]))，状态=\(fixtureManager.status)")
+                        }
+                    }
+                    zoomWindow.deminiaturize(nil)
+                    try await Task.sleep(nanoseconds: 500_000_000)
+                    fixtureManager.refresh(force: true)
+                    try await waitForIdle(fixtureManager)
+                    guard let returned = AX.frame(managed[0].element), returned.width < screen.axVisibleFrame.width / 2 else {
+                        throw AppFailure("取消最小化后窗口仍错误保持放大")
+                    }
+                    results.append("PASS：放大窗口最小化释放布局，恢复后正常加入平铺")
                 }
                 if !layoutOnly {
                 if let first = SpaceRouter.numbered(1, displays: try spaces.snapshot()),

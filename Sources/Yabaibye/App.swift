@@ -5,6 +5,7 @@ import YabaibyeCore
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let manager = WindowManager()
+    private var ownsLifecycle = false
     private var item: NSStatusItem!
     private var helpWindow: NSWindow?
     private var statusItem: NSMenuItem?
@@ -22,6 +23,7 @@ import YabaibyeCore
         }
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: "com.kenxcomp.yabaibye").filter { $0.processIdentifier != getpid() }
         guard others.isEmpty else { NSApp.terminate(nil); return }
+        ownsLifecycle = true
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "YB Ⅱ"
         item.button?.toolTip = "Yabaibye — 原生 Space 与窗口平铺"
@@ -227,7 +229,7 @@ import YabaibyeCore
     }
     @objc func quit() { NSApp.terminate(nil) }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if CommandLine.arguments.contains("--diagnose") { return .terminateNow }
+        guard ownsLifecycle else { return .terminateNow }
         // Give cancellation defers a main-run-loop turn to restore temporary accessibility settings.
         let resume = manager.enabled || (practice != nil && resumeAfterPractice)
         foregroundKeeper.stop()
