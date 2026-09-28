@@ -5,7 +5,8 @@
 - `DropOverlay`：不激活、不接收鼠标的 NSPanel，低饱和红色半透明底和斜向虚线；按 AX 顶部原点转为 AppKit 坐标。
 - `DragPractice`：三个隔离的原生测试窗口，使用相同管理器与拖拽流程，关闭任意一个就结束练习并恢复原来的管理状态。
 - `SpaceBridge`：Objective-C 桥接，动态解析 SkyLight / AX 窗口 ID，私有符号缺失时返回不可用，不因静态链接失败而崩溃。
-- `Spaces`：Space 快照、系统左右桌面快捷键、Mission Control AX 导航、可验证的 WindowManager 桥接移窗。macOS 27 的 `mc.display` 位于 WindowManager 根节点，旧版位于 Dock 的 `mc` 容器。包括超时、取消和指针恢复。
+- `SpaceRouter.navigationDisplay`：以焦点窗口屏幕 UUID（无焦点窗口时由 `NSScreen.main` 回退）忽略大小写定位当前显示器；另一屏幕取列表下一项并回绕，单屏或未知当前 UUID 不猜目标。`Command.cycle` 保留 `secondary` 序列化字段以兼容用户快捷键。
+- `Spaces`：Space 快照、当前屏幕的系统左右桌面快捷键、Mission Control AX 导航、可验证的 WindowManager 桥接移窗。另一屏幕导航强制 Mission Control 定点选择并恢复原窗口焦点，避免系统 Control + 方向键切错屏幕。macOS 27 的 `mc.display` 位于 WindowManager 根节点，旧版位于 Dock 的 `mc` 容器。包括超时、取消和指针恢复。
 - `Windows`：AX 标准窗口枚举，以 CG 可见列表 + 单 Space 归属过滤，排除桌面、弹窗、全屏和共享窗口。
 - `WindowManager`：主线程串行操作，0.8 秒轮询可见窗口；仅对策略中的平铺成员协调布局，新增浮动窗口不触发重排。布局成员或工作区改变时重排，Space 操作期间暂停布局更新与新快捷键命令。
 - `WindowTilingPolicy`：记录本登录会话的显式平铺成员，未知窗口默认浮动。首次建立基线通过 `Windows.existingWindowIDs()` 纳入已有窗口，含其他 Space 和最小化窗口；之后仅显式切换修改成员，暂时不可见不删除归属。停止 / 重启管理保留策略，新登录会话重新建立基线。浮动恢复用的 `originalFrames` 仅保留于当前应用运行。

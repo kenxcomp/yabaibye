@@ -197,6 +197,7 @@ import YabaibyeCore
                 try await FloatingWindowSmokeTest.run(existing: managed, screen: screen)
                 results.append("PASS：新窗口默认浮动且不重排；暂停和重建管理器保持；放大后加入田字布局并恢复浮动")
                 if !layoutOnly {
+                results.append(contentsOf: try await OtherDisplaySmokeTest.run())
                 if let first = SpaceRouter.numbered(1, displays: try spaces.snapshot()),
                    let third = SpaceRouter.numbered(3, displays: try spaces.snapshot()),
                    first.display.uuid == third.display.uuid {

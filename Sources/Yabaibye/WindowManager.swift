@@ -168,17 +168,20 @@ import YabaibyeCore
                         self.report("已切换到 Space \(number)")
                     }
                 case .cycle(let delta, let secondary):
-                    let display: DisplaySpaces?
-                    if secondary {
-                        guard displays.count > 1 else { throw AppFailure("未检测到第二个显示器。") }
-                        display = displays[1]
-                    } else if let screen = self.focusedWindow().flatMap({ Windows.screen(for: $0.frame) }) ?? NSScreen.main {
-                        display = self.spaces.display(for: screen, in: displays)
-                    } else { display = nil }
-                    guard let display else { throw AppFailure("无法确定当前显示器。") }
+                    let sourceWindow = self.focusedWindow()
+                    guard let screen = sourceWindow.flatMap({ Windows.screen(for: $0.frame) }) ?? NSScreen.main,
+                          let current = self.spaces.display(for: screen, in: displays) else {
+                        throw AppFailure("无法确定当前显示器。")
+                    }
+                    guard let display = SpaceRouter.navigationDisplay(currentDisplayID: current.uuid, other: secondary, displays: displays) else {
+                        throw AppFailure("未检测到当前屏幕以外的显示器。")
+                    }
                     guard let target = SpaceRouter.adjacent(delta, display: display) else { self.report("已到达此屏幕的 Space 边界"); return }
-                    try await self.spaces.focus(target)
-                    self.report("已切换\(secondary ? "第二屏" : "当前屏幕") Space")
+                    // Keyboard-based Space navigation can act on the focused display even
+                    // after warping the pointer. Select the other display's Space explicitly.
+                    try await self.spaces.focus(target, forceMissionControl: secondary)
+                    if secondary, let sourceWindow { try await Windows.restoreFocus(sourceWindow) }
+                    self.report("已切换\(secondary ? "另一屏幕" : "当前屏幕") Space")
                 case .toggleFloat:
                     guard let window = self.focusedWindow() else { throw AppFailure("前台没有可平铺的标准窗口。") }
                     try await self.restoreZoom(for: window)

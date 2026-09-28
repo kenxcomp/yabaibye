@@ -112,6 +112,27 @@ struct WindowSnapshot {
         guard let element = AX.element(root, kAXFocusedWindowAttribute) else { return nil }
         return make(element, pid: app.processIdentifier)
     }
+    static func restoreFocus(_ window: ManagedWindow) async throws {
+        guard let app = NSRunningApplication(processIdentifier: window.pid), !app.isTerminated,
+              AX.frame(window.element) != nil else { return } // The source may close during a Space transition.
+        // Select the exact main window before bringing its app forward; otherwise an app
+        // with windows on both displays can activate a different key window later.
+        let mainResult = AXUIElementSetAttributeValue(window.element, kAXMainAttribute as CFString, kCFBooleanTrue)
+        let root = AXUIElementCreateApplication(window.pid)
+        let frontResult = AXUIElementSetAttributeValue(root, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+        let focusResult = AXUIElementSetAttributeValue(root, kAXFocusedWindowAttribute as CFString, window.element)
+        let result = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
+        guard result == .success else { throw AppFailure("另一屏幕已切换，但原窗口焦点恢复失败（AX \(result.rawValue)）。") }
+        // Activation is asynchronous. Keep the command busy until the real focus
+        // returns, otherwise a repeated shortcut could identify the wrong source display.
+        for _ in 0..<20 {
+            try Task.checkCancellation()
+            if focused()?.identity == window.identity { return }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let actual = focused()?.identity ?? "none"
+        throw AppFailure("另一屏幕已切换，但原窗口未能恢复焦点（main=\(mainResult.rawValue), front=\(frontResult.rawValue), focus=\(focusResult.rawValue), expected=\(window.identity), actual=\(actual)）。")
+    }
     enum Inspection {
         case managed(ManagedWindow), excluded, unavailable
     }

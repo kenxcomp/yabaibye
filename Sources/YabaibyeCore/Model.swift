@@ -33,6 +33,13 @@ public enum SpaceRouter {
         }
         return number <= targets.count ? targets[number - 1] : nil
     }
+    // Resolve relative to the focused display, retaining WindowServer display order.
+    public static func navigationDisplay(currentDisplayID: String, other: Bool, displays: [DisplaySpaces]) -> DisplaySpaces? {
+        guard let index = displays.firstIndex(where: { $0.uuid.caseInsensitiveCompare(currentDisplayID) == .orderedSame }) else { return nil }
+        guard other else { return displays[index] }
+        guard displays.count > 1 else { return nil }
+        return displays[(index + 1) % displays.count]
+    }
     // At either edge, stay put. Fullscreen desktops can be traversed by relative navigation.
     public static func adjacent(_ delta: Int, display: DisplaySpaces) -> SpaceTarget? {
         guard let index = display.spaces.firstIndex(where: { $0.id == display.current }) else { return nil }
@@ -66,7 +73,7 @@ public struct Binding: Equatable, Codable {
         case .moveToSpace(let n): return "移窗到 Space \(n)"
         case .toggleFloat: return "平铺 / 浮动"
         case .toggleZoom: return "铺满桌面 / 恢复"
-        case .cycle(let n, let secondary): return (secondary ? "第二屏幕" : "当前屏幕") + (n < 0 ? "：上个 Space" : "：下个 Space")
+        case .cycle(let n, let secondary): return (secondary ? "另一屏幕" : "当前屏幕") + (n < 0 ? "：上个 Space" : "：下个 Space")
         case .swap(let direction): return "交换窗口：" + [Direction.left:"←", .right:"→", .up:"↑", .down:"↓"][direction]!
         }
     }

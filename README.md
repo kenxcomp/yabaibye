@@ -90,10 +90,10 @@ Space:     1  2  3  4  5  6  7  8  9
 | `Option + T` | Toggle tiled / floating |
 | `Option + Return` | Fill the current desktop's usable area / restore |
 | `Option + [` / `Option + ]` | Previous / next Space on the current window's display |
-| `Option + Shift + [` / `Option + Shift + ]` | Previous / next Space on the second display |
+| `Option + Shift + [` / `Option + Shift + ]` | Previous / next Space on the other display |
 | `Option + Arrow keys` | Swap with the tiled window in that direction |
 
-Numbering follows Mission Control display/desktop order across monitors and skips fullscreen Spaces. Relative navigation includes fullscreen Spaces and stops at either end. Numbered jumps select the target desktop directly in Mission Control; they do not step through every intermediate desktop, but the system animation remains visible.
+Numbering follows Mission Control display/desktop order across monitors and skips fullscreen Spaces. Relative navigation includes fullscreen Spaces and stops at either end. The current display follows the focused window, falling back to the system main screen when there is no focused window. With two displays, the other-display shortcut targets the non-current display; with three or more, it targets the next display in the Space display list, wrapping to the first. Other-display navigation selects the destination directly in Mission Control and restores the original window focus; it does not use the system Control-arrow shortcut. Numbered jumps select the target desktop directly in Mission Control; they do not step through every intermediate desktop, but the system animation remains visible.
 
 All bindings are editable in **快捷键设置…**. Changing a focus shortcut does not automatically change its move-window counterpart; configure each action as needed. Saved custom bindings are retained across app restarts.
 
@@ -121,7 +121,7 @@ No. Global shortcuts are built into the app. You can edit each action's key and 
 
 ### Does it support multiple monitors and macOS Spaces?
 
-Yes, within the tested configuration. Numbered Spaces are shared across displays, and separate shortcuts navigate the second display. The second display means the second entry in the Space display list, not necessarily whichever display is unfocused.
+Yes, within the tested configuration. Numbered Spaces are shared across displays. Separate shortcuts navigate the current display or the other display with other-display navigation retaining the original window focus. With more than two displays, “other” means the next display after the current one in the Space display list, wrapping at the end.
 
 ### Does Option+Return create a native fullscreen Space?
 
