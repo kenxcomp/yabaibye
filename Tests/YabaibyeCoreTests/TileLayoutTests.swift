@@ -4,6 +4,18 @@ import CoreGraphics
 
 final class TileLayoutTests: XCTestCase {
     let bounds = CGRect(x: -1200, y: 40, width: 1200, height: 800)
+    func testThreeTilesUseTwoColumnsAndFillTheAvailableArea() {
+        let frames = TileLayout(ids: ["A", "B", "C"]).frames(in: bounds, gap: 0)
+        XCTAssertEqual(frames["A"], CGRect(x: -1200, y: 40, width: 600, height: 400))
+        XCTAssertEqual(frames["B"], CGRect(x: -1200, y: 440, width: 600, height: 400))
+        XCTAssertEqual(frames["C"], CGRect(x: -600, y: 40, width: 600, height: 800))
+    }
+    func testClosingFourthWindowKeepsTwoColumnGrid() {
+        var layout = TileLayout(ids: ["A", "B", "C", "D"])
+        layout.reconcile(["C", "B", "A"])
+        XCTAssertEqual(layout, TileLayout(ids: ["A", "B", "C"]))
+        XCTAssertFalse(layout.customized)
+    }
     func testFourTilesFormGridEvenOnUltrawideDisplay() {
         let frames = TileLayout(ids: ["A", "B", "C", "D"]).frames(in: CGRect(x: 0, y: 0, width: 3440, height: 1440), gap: 0)
         XCTAssertEqual(frames["A"], CGRect(x: 0, y: 0, width: 1720, height: 720))

@@ -22,7 +22,7 @@ import YabaibyeCore
         let restoreFrame: CGRect
     }
     private var zoomed: [UInt64: ZoomedWindow] = [:]
-    private var floating: [String: CGRect] = [:]
+    private var tilingPolicy: WindowTilingPolicy?
     private var originalFrames: [String: CGRect] = [:]
 
     private(set) var enabled = false
@@ -31,6 +31,7 @@ import YabaibyeCore
     var changed: (() -> Void)?
 
     private let snapshotProvider: @MainActor () -> WindowSnapshot
+    private let initialWindowIDs: @MainActor () -> Set<String>?
     private let rawFocusedWindow: @MainActor () -> ManagedWindow?
     private let allowedWindows: Set<String>?
     private let registerHotkeys: Bool
@@ -57,7 +58,16 @@ import YabaibyeCore
             let login = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.loginwindow").first?.processIdentifier
             if valid, let login { persistence = LayoutPersistence(session: "\(String(cString: buffer)):\(getuid()):\(login)") }
         }
-        self.snapshotProvider = snapshotProvider ?? visibleWindows.map { provider in { WindowSnapshot(windows: provider()) } } ?? { Windows.snapshot() }
+        let provider = snapshotProvider ?? visibleWindows.map { provider in { WindowSnapshot(windows: provider()) } } ?? { Windows.snapshot() }
+        self.snapshotProvider = provider
+        if snapshotProvider != nil || visibleWindows != nil {
+            self.initialWindowIDs = {
+                let snapshot = provider()
+                guard snapshot.complete, snapshot.unavailableDisplays.isEmpty else { return nil }
+                return Set(snapshot.windows.filter { allowedWindows?.contains($0.identity) ?? true }.map(\.identity))
+            }
+        } else { self.initialWindowIDs = { Windows.existingWindowIDs() } }
+        self.tilingPolicy = persistence?.tilingPolicy
         self.rawFocusedWindow = focusedWindow
         self.allowedWindows = allowedWindows; self.registerHotkeys = registerHotkeys
         self.managesUserPreferences = persistLayouts; self.applyFrames = applyFrames
@@ -94,7 +104,15 @@ import YabaibyeCore
         let conflicts = Self.conflicts()
         guard conflicts.isEmpty else { throw AppFailure("请先停止 \(conflicts.joined(separator: "、"))，避免同时管理窗口。") }
         _ = try spaces.snapshot()
+        let policy: WindowTilingPolicy
+        if let existing = tilingPolicy { policy = existing }
+        else {
+            guard let ids = initialWindowIDs() else { throw AppFailure("暂时无法读取初始窗口列表，请重试启用。") }
+            policy = WindowTilingPolicy(initialWindowIDs: ids)
+        }
         if registerHotkeys { try hotkeys.start() }
+        tilingPolicy = policy
+        persistence?.saveTilingPolicy(policy)
         enabled = true
         drag.start()
         if managesUserPreferences { UserDefaults.standard.set(true, forKey: "managerEnabled") }
@@ -164,15 +182,20 @@ import YabaibyeCore
                 case .toggleFloat:
                     guard let window = self.focusedWindow() else { throw AppFailure("前台没有可平铺的标准窗口。") }
                     try await self.restoreZoom(for: window)
-                    if let saved = self.floating.removeValue(forKey: window.identity) {
-                        self.originalFrames[window.identity] = saved
-                        self.report("窗口已加入平铺")
-                    } else {
+                    guard var policy = self.tilingPolicy else { return }
+                    if policy.isTiled(window.identity) {
                         let frame = self.originalFrames[window.identity] ?? window.frame
                         guard try await AX.applyFrames([(window.element, frame)]) else { throw AppFailure("窗口拒绝恢复浮动尺寸。") }
-                        self.floating[window.identity] = frame
+                        policy.setTiled(false, for: window.identity)
                         self.report("窗口已浮动")
+                    } else {
+                        guard let frame = AX.frame(window.element) else { throw AppFailure("暂时无法读取浮动窗口尺寸，请重试。") }
+                        self.originalFrames[window.identity] = frame
+                        policy.setTiled(true, for: window.identity)
+                        self.report("窗口已加入平铺")
                     }
+                    self.tilingPolicy = policy
+                    self.persistence?.saveTilingPolicy(policy)
                 case .toggleZoom:
                     guard let window = self.focusedWindow(), let screen = Windows.screen(for: window.frame),
                           self.spaces.memberships(window.id).count == 1,
@@ -250,7 +273,7 @@ import YabaibyeCore
                 }
             }
             let members = windows.filter {
-                floating[$0.identity] == nil && memberships[$0.id] == [display.current] && Windows.screen(for: $0.frame)?.displayID == screen.displayID
+                tilingPolicy?.isTiled($0.identity) == true && memberships[$0.id] == [display.current] && Windows.screen(for: $0.frame)?.displayID == screen.displayID
             }
             tiledWindows[display.current] = members
             let ids = members.map(\.identity).sorted()
@@ -319,7 +342,7 @@ import YabaibyeCore
         applications.removeValue(forKey: entry.key)
     }
     private func swap(_ direction: Direction) throws {
-        guard let window = self.focusedWindow(), floating[window.identity] == nil,
+        guard let window = self.focusedWindow(), tilingPolicy?.isTiled(window.identity) == true,
               let space = spaces.memberships(window.id).first,
               var layout = layouts[space], let index = layout.ids.firstIndex(of: window.identity),
               let screen = Windows.screen(for: window.frame) else { throw AppFailure("前台窗口不在平铺布局中。") }
@@ -334,7 +357,7 @@ import YabaibyeCore
     }
     private func captureDrag(at point: CGPoint) -> TileDragContext? {
         guard enabled, !busy, !isLayingOut, AXIsProcessTrusted(), spaces.missionControl() == nil,
-              let window = focusedWindow(), floating[window.identity] == nil,
+              let window = focusedWindow(), tilingPolicy?.isTiled(window.identity) == true,
               let space = spaces.memberships(window.id).first, zoomed[space] == nil,
               let members = tiledWindows[space], let source = members.first(where: { $0.identity == window.identity }),
               source.frame.contains(point) else { return nil }

@@ -71,7 +71,6 @@ public struct TileLayout: Equatable, Codable {
     private static func grid(_ ids: [String]) -> Node? {
         guard !ids.isEmpty else { return nil }
         if ids.count == 1 { return .window(ids[0]) }
-        if ids.count <= 3 { return .split(.horizontal, ids.map(Node.window)) }
         let columns = Int(ceil(sqrt(Double(ids.count))))
         var offset = 0
         let groups = (0..<columns).map { column -> Node in
@@ -83,9 +82,11 @@ public struct TileLayout: Equatable, Codable {
     }
     public mutating func reconcile(_ members: [String]) {
         let memberSet = Set(members)
-        if Set(ids) == memberSet { return }
         let order = ids.filter { memberSet.contains($0) } + members.filter { !ids.contains($0) }
+        // Rebuild automatic layouts even when membership is unchanged so saved defaults
+        // follow the current grid policy. Explicit drag partitions retain their geometry.
         guard customized else { root = Self.grid(order); return }
+        if Set(ids) == memberSet { return }
         for id in ids where !memberSet.contains(id) { root = root?.removing(id) }
         for id in order where !ids.contains(id) {
             root = root.map { Node.split(.horizontal, [$0, .window(id)]).normalized()! } ?? .window(id)

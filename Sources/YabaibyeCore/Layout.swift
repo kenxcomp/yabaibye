@@ -2,7 +2,7 @@ import Foundation
 import CoreGraphics
 
 public enum Layout {
-    // Three windows form columns; four form a 2 x 2 grid regardless of screen aspect.
+    // Three windows use two columns with a stacked pair; four form a 2 x 2 grid.
     public static func frames(count: Int, in bounds: CGRect, gap: CGFloat = 10) -> [CGRect] {
         guard count > 0 else { return [] }
         let ids = (0..<count).map(String.init)

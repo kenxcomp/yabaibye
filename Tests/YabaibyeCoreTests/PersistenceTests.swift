@@ -24,6 +24,33 @@ final class PersistenceTests: XCTestCase {
         defaults.set(Data("broken".utf8), forKey: ShortcutPreferences.storageKey)
         XCTAssertEqual(ShortcutPreferences.load(from: defaults), original)
     }
+    func testSavedAutomaticColumnsAdoptCurrentGridWithoutChangingWindowOrder() throws {
+        let name = "Yabaibye.Tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        // Snapshot of the old default. Keep this independent of the current initializer.
+        let saved = #"{"session":"login-1","layouts":{"screen:1":{"customized":false,"root":{"split":{"_0":{"horizontal":{}},"_1":[{"window":{"_0":"B"}},{"window":{"_0":"A"}},{"window":{"_0":"C"}}]}}}}}"#
+        defaults.set(Data(saved.utf8), forKey: LayoutPersistence.storageKey)
+        let store = LayoutPersistence(session: "login-1", defaults: defaults)
+        var layout = try XCTUnwrap(store.layout(display: "screen", space: 1))
+        layout.reconcile(["A", "B", "C"])
+        XCTAssertEqual(layout, TileLayout(ids: ["B", "A", "C"]))
+        XCTAssertFalse(layout.customized)
+    }
+    func testSavedManualColumnsStayCustomizedAfterRestart() throws {
+        let name = "Yabaibye.Tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        var layout = TileLayout(ids: ["A", "B", "C"])
+        layout.drop("A", onto: "C", zone: .right)
+        var store = LayoutPersistence(session: "login-1", defaults: defaults)
+        store.save(layout, display: "screen", space: 1)
+        var restored = try XCTUnwrap(LayoutPersistence(session: "login-1", defaults: defaults).layout(display: "screen", space: 1))
+        restored.reconcile(["A", "B", "C"])
+        XCTAssertEqual(restored, layout)
+        XCTAssertTrue(restored.customized)
+        XCTAssertTrue(restored.frames(in: CGRect(x: 0, y: 0, width: 1200, height: 800), gap: 0).values.allSatisfy { $0.width == 400 })
+    }
     func testRestartPreservesPartitionAndSubsequentDropRebalances() throws {
         let name = "Yabaibye.Tests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!

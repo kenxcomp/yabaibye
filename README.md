@@ -17,29 +17,29 @@ Looking for a **yabai alternative** with built-in hotkeys? Yabaibye combines a m
 
 | Feature | What you can do |
 |---|---|
-| **Automatic grid tiling** | Arrange four windows in a 2×2 grid; larger groups use a near-square grid. |
+| **Automatic grid tiling** | Among tiled windows, arrange three in two columns, with two stacked on the left; four use a 2×2 grid, and larger groups use a near-square grid. |
 | **Drag-to-split layouts** | Drop on a window edge to split its region, or drop in its center to swap positions. A muted red, diagonally hatched overlay previews the result. |
 | **Native macOS Spaces** | Jump directly to numbered desktops, move the focused window between Spaces, and navigate desktops on either display. |
 | **Customizable keyboard shortcuts** | Change the key and modifiers for all 28 actions, with duplicate and registration-conflict checks. |
 | **Adjustable padding and gaps** | Set screen-edge padding and window spacing independently from 0–100 pt. |
 | **Window zoom and floating** | Fill the current desktop's usable area and restore it, or toggle an individual window between tiled and floating. |
-| **Layout persistence** | Restore custom partitions for still-open windows when Yabaibye restarts within the same login session. |
+| **Layout persistence** | Keep tiled/floating membership and restore custom partitions for still-open windows across restarts within the same login session. |
 | **Foreground-window protection** | Attempt to raise the active window above overlapping ordinary background windows without changing application focus. |
 
 ## Drag to split or swap
 
-Three windows start as equal columns. Drag **A below B** to divide the left half vertically; then drag **A to the right of C** to return to three equal columns:
+Three tiled windows start in two equal-width columns: **A above B** on the left and **C** filling the right. Drag **A below B** to reorder the left column; then drag **A to the right of C** to create three equal columns:
 
 ```text
-Initial layout          A below B               A right of C
-┌─────┬─────┬─────┐     ┌────────┬────────┐      ┌─────┬─────┬─────┐
-│     │     │     │     │   B    │        │      │     │     │     │
-│  A  │  B  │  C  │  →  ├────────┤   C    │  →   │  B  │  C  │  A  │
-│     │     │     │     │   A    │        │      │     │     │     │
-└─────┴─────┴─────┘     └────────┴────────┘      └─────┴─────┴─────┘
+Default layout          A below B               A right of C
+┌────────┬────────┐     ┌────────┬────────┐      ┌─────┬─────┬─────┐
+│   A    │        │     │   B    │        │      │     │     │     │
+├────────┤   C    │  →  ├────────┤   C    │  →   │  B  │  C  │  A  │
+│   B    │        │     │   A    │        │      │     │     │     │
+└────────┴────────┘     └────────┴────────┘      └─────┴─────┴─────┘
 ```
 
-Drop in the **center** to swap, or at the **top, bottom, left, or right edge** to split. Press Escape during a drag to cancel. Drag partitioning operates within one Space. Four windows use a 2×2 grid by default, including on an ultrawide display.
+Drop in the **center** to swap, or at the **top, bottom, left, or right edge** to split. Press Escape during a drag to cancel. Drag partitioning operates within one Space. Four windows use a 2×2 grid by default, including on an ultrawide display. Saved automatic layouts follow the current default when refreshed; saved custom partitions retain their structure, including manually arranged three-column layouts.
 
 ## Get started
 
@@ -67,6 +67,12 @@ Every bundle build enables Hardened Runtime with default library validation and 
 5. Use **快捷键设置…** (Keyboard shortcuts) and **平铺留白…** (Padding and gaps) to personalize the controls. Settings persist automatically after saving.
 
 Keep SIP enabled. Yabaibye does not require an administrator daemon, kernel extension, or Dock injection.
+
+## Which windows are tiled?
+
+When Yabaibye first establishes a baseline in a login session, existing windows are enrolled for tiling, including those on other Spaces or currently minimized. Windows created afterward float by default: Yabaibye keeps their application-provided position and size and does not rearrange the tiled windows for them. Press **Option+T** to add the focused window to tiling or make it floating.
+
+Membership persists within the same login session. Pausing, resuming, or restarting Yabaibye does not enroll floating windows, and temporarily hiding or minimizing a tiled window does not forget its membership. A new login session, including after restarting macOS, establishes a new baseline. The grid rules apply only to tiled windows. The pre-tiling size used when returning a window to floating is remembered only during the current Yabaibye run.
 
 ## Default shortcuts
 

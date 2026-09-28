@@ -39,11 +39,12 @@ import YabaibyeCore
                     let accepted = try await AX.applyFrames([(window.element, frames[i])])
                     try await Task.sleep(nanoseconds: 200_000_000)
                     let actual = AX.frame(window.element)
-                    guard accepted, let actual, abs(actual.width - frames[i].width) < 3, abs(actual.minX - frames[i].minX) < 3 else {
+                    guard accepted, let actual, abs(actual.width - frames[i].width) < 3, abs(actual.height - frames[i].height) < 3,
+                          abs(actual.minX - frames[i].minX) < 3, abs(actual.minY - frames[i].minY) < 3 else {
                         throw AppFailure("AX 平铺尺寸校验失败：accepted=\(accepted)，目标=\(frames[i])，实际=\(String(describing: actual))")
                     }
                 }
-                results.append("PASS：真实 AX 窗口移动和缩放")
+                results.append("PASS：三窗口默认两列网格的实际 AX 位置与尺寸")
                 // Run production command handling against only the owned fixtures.
                 let suiteName = "Yabaibye.LayoutSelfTest.\(UUID().uuidString)"
                 let testDefaults = UserDefaults(suiteName: suiteName)!
@@ -51,9 +52,10 @@ import YabaibyeCore
                 var unavailableSnapshot = false
                 var failFirstApply = true
                 var applyAttempts = 0
+                var focusedFixture = managed[0]
                 let fixtureManager = WindowManager(visibleWindows: {
                     managed.compactMap { Windows.make($0.element, pid: $0.pid) }
-                }, focusedWindow: { Windows.make(managed[0].element, pid: managed[0].pid) }, persistLayouts: false, layoutStore: LayoutPersistence(session: "test", defaults: testDefaults), snapshotProvider: {
+                }, focusedWindow: { Windows.make(focusedFixture.element, pid: focusedFixture.pid) }, persistLayouts: false, layoutStore: LayoutPersistence(session: "test", defaults: testDefaults), snapshotProvider: {
                     let current = managed.compactMap { Windows.make($0.element, pid: $0.pid) }
                     return unavailableSnapshot
                         ? WindowSnapshot(windows: Array(current.dropFirst()), unavailableDisplays: [screen.displayID])
@@ -93,27 +95,34 @@ import YabaibyeCore
                     guard fixtureManager.status == "窗口已浮动" else { throw AppFailure("浮动命令未完成") }
                     fixtureManager.execute(.toggleFloat)
                     try await waitForIdle(fixtureManager)
+                    // AX enumeration order is unrelated to grid neighbors. Exercise the
+                    // unambiguous vertical pair instead of guessing a left-side tie.
+                    let positioned = managed.compactMap { Windows.make($0.element, pid: $0.pid) }
                     guard fixtureManager.status == "窗口已加入平铺",
-                          let first = AX.frame(managed[0].element), let second = AX.frame(managed[1].element) else {
-                        throw AppFailure("重新加入平铺失败")
-                    }
-                    let direction: Direction = abs(first.midX - second.midX) > abs(first.midY - second.midY)
-                        ? (first.midX < second.midX ? .right : .left) : (first.midY < second.midY ? .down : .up)
-                    fixtureManager.execute(.swap(direction))
+                          let leftX = positioned.map(\.frame.minX).min() else { throw AppFailure("重新加入平铺失败") }
+                    let leftPair = positioned.filter { abs($0.frame.minX - leftX) < 3 }.sorted { $0.frame.minY < $1.frame.minY }
+                    guard leftPair.count == 2 else { throw AppFailure("默认网格缺少左侧上下窗口") }
+                    let first = leftPair[0].frame, second = leftPair[1].frame
+                    focusedFixture = leftPair[0]
+                    fixtureManager.execute(.swap(.down))
                     try await waitForIdle(fixtureManager)
-                    guard let afterFirst = AX.frame(managed[0].element), let afterSecond = AX.frame(managed[1].element),
+                    focusedFixture = managed[0]
+                    guard let afterFirst = AX.frame(leftPair[0].element), let afterSecond = AX.frame(leftPair[1].element),
                           abs(afterFirst.minX - second.minX) < 3, abs(afterFirst.minY - second.minY) < 3,
                           abs(afterSecond.minX - first.minX) < 3, abs(afterSecond.minY - first.minY) < 3 else {
                         throw AppFailure("方向交换后的实际窗口位置不匹配")
                     }
                     results.append("PASS：平铺 / 浮动切换与方向交换命令")
-                    let row = managed.compactMap { Windows.make($0.element, pid: $0.pid) }.sorted { $0.frame.minX < $1.frame.minX }
+                    let row = managed.compactMap { Windows.make($0.element, pid: $0.pid) }.sorted {
+                        if abs($0.frame.minX - $1.frame.minX) > 3 { return $0.frame.minX < $1.frame.minX }
+                        return $0.frame.minY < $1.frame.minY
+                    }
                     guard row.count == 3, let space = spaces.memberships(row[0].id).first else { throw AppFailure("拖拽分区测试缺少窗口") }
                     fixtureManager.finishDrag(TileDragContext(space: space, source: row[0], candidates: row), target: row[1].identity, zone: .bottom)
                     try await waitForIdle(fixtureManager)
                     guard let a = AX.frame(row[0].element), let b = AX.frame(row[1].element), let c = AX.frame(row[2].element),
                           abs(a.minX - b.minX) < 3, a.minY > b.minY, c.minX > b.minX,
-                          abs(a.width - c.width) < 3, abs(a.height - b.height) < 3 else { throw AppFailure("三列转左侧上下分区的实际位置不匹配") }
+                          abs(a.width - c.width) < 3, abs(a.height - b.height) < 3 else { throw AppFailure("默认网格调整为左侧 B/A 分区的实际位置不匹配") }
                     let savedPartition = LayoutPersistence(session: "test", defaults: testDefaults).layout(display: screen.uuid, space: space)
                     guard savedPartition != nil else { throw AppFailure("未找到自检保存的分区") }
                     unavailableSnapshot = true
@@ -157,7 +166,7 @@ import YabaibyeCore
                           abs(lastA.height - lastC.height) < 3, abs(lastB.height - lastC.height) < 3 else {
                         throw AppFailure("嵌套分区恢复 B/C/A 等宽三列失败")
                     }
-                    results.append("PASS：拖拽落点命令 III → 左侧 B/A → B/C/A 等宽三列（实际 AX 几何）")
+                    results.append("PASS：拖拽落点命令：默认两列网格 → 左侧 B/A → 手动 B/C/A 等宽三列（实际 AX 几何）")
                     fixtureManager.execute(.toggleZoom)
                     try await waitForIdle(fixtureManager)
                     guard let zoomWindow = windows.first(where: { UInt32($0.windowNumber) == managed[0].id }) else { throw AppFailure("找不到最小化测试窗口") }
@@ -185,6 +194,8 @@ import YabaibyeCore
                     }
                     results.append("PASS：放大窗口最小化释放布局，恢复后正常加入平铺")
                 }
+                try await FloatingWindowSmokeTest.run(existing: managed, screen: screen)
+                results.append("PASS：新窗口默认浮动且不重排；暂停和重建管理器保持；放大后加入田字布局并恢复浮动")
                 if !layoutOnly {
                 if let first = SpaceRouter.numbered(1, displays: try spaces.snapshot()),
                    let third = SpaceRouter.numbered(3, displays: try spaces.snapshot()),

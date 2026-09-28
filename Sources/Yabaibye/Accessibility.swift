@@ -138,6 +138,20 @@ struct WindowSnapshot {
         guard id != 0 else { return .unavailable }
         return .managed(ManagedWindow(id: id, pid: pid, element: element, frame: frame))
     }
+    // Establish membership once, including windows on inactive Spaces and minimized
+    // windows. Later appearances never implicitly join the tiling layout.
+    static func existingWindowIDs() -> Set<String>? {
+        guard let records = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], 0) as? [[String: Any]] else { return nil }
+        let apps = Set(NSWorkspace.shared.runningApplications.filter {
+            $0.activationPolicy == .regular && $0.processIdentifier != getpid()
+        }.map(\.processIdentifier))
+        return Set(records.compactMap { record in
+            guard record[kCGWindowLayer as String] as? Int == 0,
+                  let pid = record[kCGWindowOwnerPID as String] as? Int32, apps.contains(pid),
+                  let id = (record[kCGWindowNumber as String] as? NSNumber)?.uint32Value else { return nil }
+            return "\(pid):\(id)"
+        })
+    }
     static func visible() -> [ManagedWindow] { snapshot().windows }
     static func snapshot() -> WindowSnapshot {
         guard let records = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], 0) as? [[String: Any]] else {
