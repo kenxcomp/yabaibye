@@ -25,12 +25,12 @@ import YabaibyeCore
         guard status == noErr else { throw AppFailure("无法安装快捷键处理器（\(status)）。") }
         for (index, binding) in Binding.defaults.enumerated() {
             var ref: EventHotKeyRef?
-            let modifiers = UInt32(optionKey) | (binding.shift ? UInt32(shiftKey) : 0)
+            let modifiers = UInt32(optionKey) | (binding.shift ? UInt32(shiftKey) : 0) | (binding.control ? UInt32(controlKey) : 0)
             let code = RegisterEventHotKey(binding.keyCode, modifiers, EventHotKeyID(signature: Self.signature, id: UInt32(index + 1)),
                                            GetApplicationEventTarget(), 0, &ref)
             guard code == noErr, let ref else {
                 stop()
-                throw AppFailure("快捷键注册失败（第 \(index + 1) 项，\(code)）；请退出其他快捷键工具后重试。")
+                throw AppFailure("快捷键 \(binding.label) 已被占用或无法注册（\(code)）；请调整冲突快捷键后重试。")
             }
             references.append(ref)
         }

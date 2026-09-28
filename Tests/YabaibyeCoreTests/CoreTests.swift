@@ -22,8 +22,9 @@ final class CoreTests: XCTestCase {
     }
     func testAllRequestedBindingsAreUnique() {
         let bindings = Binding.defaults
-        XCTAssertEqual(bindings.count, 27)
-        XCTAssertEqual(Set(bindings.map { "\($0.keyCode):\($0.shift)" }).count, 27)
+        XCTAssertEqual(bindings.count, 28)
+        XCTAssertEqual(Set(bindings.map { "\($0.keyCode):\($0.shift):\($0.control)" }).count, 28)
+        XCTAssertEqual(bindings.first { $0.keyCode == 36 }?.command, .toggleZoom)
         let letters: [UInt32] = [0, 11, 8, 2, 14, 3, 5, 4, 34]
         for (i, key) in letters.enumerated() {
             XCTAssertEqual(bindings.first { $0.keyCode == key && !$0.shift }?.command, .focusSpace(i + 1))

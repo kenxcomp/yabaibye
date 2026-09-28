@@ -43,15 +43,22 @@ public enum SpaceRouter {
 }
 public enum Direction: String, CaseIterable { case left, right, up, down }
 public enum Command: Equatable {
-    case focusSpace(Int), moveToSpace(Int), toggleFloat
+    case focusSpace(Int), moveToSpace(Int), toggleFloat, toggleZoom
     case cycle(Int, secondary: Bool), swap(Direction)
 }
 public struct Binding {
     public let keyCode: UInt32
     public let shift: Bool
+    public let control: Bool
     public let command: Command
-    public init(_ keyCode: UInt32, shift: Bool = false, command: Command) {
-        self.keyCode = keyCode; self.shift = shift; self.command = command
+    public init(_ keyCode: UInt32, shift: Bool = false, control: Bool = false, command: Command) {
+        self.keyCode = keyCode; self.shift = shift; self.control = control; self.command = command
+    }
+    public var label: String {
+        let names: [UInt32: String] = [0: "A", 11: "B", 8: "C", 2: "D", 14: "E", 3: "F", 5: "G", 4: "H", 34: "I",
+            18: "1", 19: "2", 20: "3", 21: "4", 23: "5", 22: "6", 26: "7", 28: "8", 25: "9",
+            36: "Return", 17: "T", 33: "[", 30: "]", 123: "←", 124: "→", 126: "↑", 125: "↓"]
+        return (control ? "⌃" : "") + "⌥" + (shift ? "⇧" : "") + (names[keyCode] ?? String(keyCode))
     }
     public static let defaults: [Binding] = {
         // Physical ANSI a...i; independent of the active input method.
@@ -60,6 +67,7 @@ public struct Binding {
             [Binding(code, command: .focusSpace(i + 1)), Binding(code, shift: true, command: .moveToSpace(i + 1))]
         }
         items.append(Binding(17, command: .toggleFloat))
+        items.append(Binding(36, command: .toggleZoom))
         for shift in [false, true] {
             items.append(Binding(33, shift: shift, command: .cycle(-1, secondary: shift)))
             items.append(Binding(30, shift: shift, command: .cycle(1, secondary: shift)))

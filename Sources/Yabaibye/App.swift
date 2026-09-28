@@ -52,6 +52,7 @@ import YabaibyeCore
         add("平铺留白…", to: menu, action: #selector(showSpacingSettings))
         let foreground = add("保持前台窗口在上层", to: menu, action: #selector(toggleForeground))
         foreground.state = ForegroundKeeper.enabled ? .on : .off
+        add("放大 / 恢复当前窗口（⌥Return）", to: menu, action: #selector(toggleZoom))
         add("重新平铺当前桌面", to: menu, action: #selector(retile))
         if let displays = try? manager.spaces.snapshot() {
             let submenu = NSMenu()
@@ -89,6 +90,7 @@ import YabaibyeCore
         spacingSettings.onChange = { [weak self] in self?.manager.refresh(force: true) }
         spacingSettings.show()
     }
+    @objc func toggleZoom() { manager.execute(.toggleZoom) }
     @objc func retile() { manager.refresh(force: true) }
     @objc func selectSpace(_ sender: NSMenuItem) { manager.execute(.focusSpace(sender.tag)) }
     @objc func requestAccess() {
@@ -168,7 +170,7 @@ import YabaibyeCore
     }
     @objc func showHelp() {
         if let helpWindow { helpWindow.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 620), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 650), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Yabaibye"; window.isReleasedWhenClosed = false; window.center()
         let stack = NSStackView(); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 18
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -176,7 +178,7 @@ import YabaibyeCore
         title.font = .systemFont(ofSize: 26, weight: .bold); stack.addArrangedSubview(title)
         let subtitle = NSTextField(wrappingLabelWithString: "原生 Space · 自动平铺 · 独立快捷键\n不需要关闭 SIP，不依赖 yabai 或 skhd。")
         subtitle.textColor = .secondaryLabelColor; stack.addArrangedSubview(subtitle)
-        let keys = NSTextField(wrappingLabelWithString: "⌥ A … I              跳转 Space 1–9\n⌥ ⇧ A … I          将前台窗口移到 Space 1–9\n⌥ T                       前台窗口：平铺 / 浮动\n⌥ [ / ]                  当前屏幕：上一个 / 下一个 Space\n⌥ ⇧ [ / ]              第二屏幕：上一个 / 下一个 Space\n⌥ ← ↑ ↓ →         与该方向的平铺窗口交换")
+        let keys = NSTextField(wrappingLabelWithString: "⌥ A … I              跳转 Space 1–9\n⌥ ⇧ A … I          将前台窗口移到 Space 1–9\n⌥ T                       前台窗口：平铺 / 浮动\n⌥ Return              铺满当前桌面 / 恢复\n⌥ [ / ]                  当前屏幕：上一个 / 下一个 Space\n⌥ ⇧ [ / ]              第二屏幕：上一个 / 下一个 Space\n⌥ ← ↑ ↓ →         与该方向的平铺窗口交换")
         keys.font = .monospacedSystemFont(ofSize: 14, weight: .regular); stack.addArrangedSubview(keys)
         let details = NSTextField(wrappingLabelWithString: "首次使用：授予辅助功能权限，再从菜单栏启用。请先停止 yabai / skhd，并开启‘显示器具有单独的空间’。建议关闭‘根据最近使用情况自动重新排列空间’。\n\n桌面跨屏统一编号，不含全屏应用；相邻切换到边界即停止。Space 切换必要时会短暂显示 Mission Control；移窗后保持当前桌面。当前版本的原生 Space 操作需在你的系统上验收。")
         details.font = .systemFont(ofSize: 12); details.textColor = .secondaryLabelColor; stack.addArrangedSubview(details)

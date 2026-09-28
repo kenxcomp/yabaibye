@@ -19,7 +19,7 @@ import YabaibyeCore
             do {
                 let hotkeys = Hotkeys()
                 try hotkeys.start(); hotkeys.stop()
-                results.append("PASS：27 个全局快捷键注册 / 释放")
+                results.append("PASS：\(Binding.defaults.count) 个全局快捷键注册 / 释放")
                 guard let screen = NSScreen.screens.first else { throw AppFailure("没有显示器") }
                 for i in 0..<3 {
                     let window = NSWindow(contentRect: NSRect(x: screen.frame.minX + 140 + CGFloat(i) * 80, y: screen.frame.minY + 180, width: 480, height: 340),
@@ -52,6 +52,18 @@ import YabaibyeCore
                     defer { fixtureManager.stop() }
                     try fixtureManager.start()
                     try await waitForIdle(fixtureManager)
+                    let beforeZoom = managed.map { AX.frame($0.element) }
+                    fixtureManager.execute(.toggleZoom)
+                    try await waitForIdle(fixtureManager)
+                    guard let zoom = AX.frame(managed[0].element), abs(zoom.width - screen.axVisibleFrame.width) < 3,
+                          abs(zoom.height - screen.axVisibleFrame.height) < 3 else { throw AppFailure("放大窗口未铺满当前桌面") }
+                    fixtureManager.execute(.toggleZoom)
+                    try await waitForIdle(fixtureManager)
+                    guard managed.enumerated().allSatisfy({ index, window in
+                        guard let actual = AX.frame(window.element), let before = beforeZoom[index] else { return false }
+                        return abs(actual.minX - before.minX) < 3 && abs(actual.minY - before.minY) < 3 && abs(actual.width - before.width) < 3 && abs(actual.height - before.height) < 3
+                    }) else { throw AppFailure("放大后未恢复原平铺布局") }
+                    results.append("PASS：当前桌面放大 / 恢复，原平铺布局保持")
                     fixtureManager.execute(.toggleFloat)
                     try await waitForIdle(fixtureManager)
                     guard fixtureManager.status == "窗口已浮动" else { throw AppFailure("浮动命令未完成") }

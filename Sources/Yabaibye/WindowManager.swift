@@ -15,6 +15,11 @@ import YabaibyeCore
     private var tiledWindows: [UInt64: [ManagedWindow]] = [:]
     private var renderedLayouts: [UInt64: TileLayout] = [:]
     private let drag = DragTiling()
+    private struct ZoomedWindow {
+        let window: ManagedWindow
+        let restoreFrame: CGRect
+    }
+    private var zoomed: [UInt64: ZoomedWindow] = [:]
     private var floating: [String: CGRect] = [:]
     private var originalFrames: [String: CGRect] = [:]
     private var signatures: [UInt64: String] = [:]
@@ -88,6 +93,7 @@ import YabaibyeCore
                     guard let target = SpaceRouter.numbered(number, displays: displays) else { throw AppFailure("Space \(number) 不存在；请先在 Mission Control 创建桌面。") }
                     if case .moveToSpace = command {
                         guard let window = self.focusedWindow() else { throw AppFailure("前台没有可移动的标准窗口。") }
+                        try await self.restoreZoom(for: window)
                         try await self.spaces.move(window, to: target)
                         self.report("窗口已移到 Space \(number)")
                     } else {
@@ -108,6 +114,7 @@ import YabaibyeCore
                     self.report("已切换\(secondary ? "第二屏" : "当前屏幕") Space")
                 case .toggleFloat:
                     guard let window = self.focusedWindow() else { throw AppFailure("前台没有可平铺的标准窗口。") }
+                    try await self.restoreZoom(for: window)
                     if let saved = self.floating.removeValue(forKey: window.identity) {
                         self.originalFrames[window.identity] = saved
                         self.report("窗口已加入平铺")
@@ -117,7 +124,32 @@ import YabaibyeCore
                         self.floating[window.identity] = frame
                         self.report("窗口已浮动")
                     }
-                case .swap(let direction): try self.swap(direction)
+                case .toggleZoom:
+                    guard let window = self.focusedWindow(), let screen = Windows.screen(for: window.frame),
+                          self.spaces.memberships(window.id).count == 1,
+                          let space = self.spaces.memberships(window.id).first,
+                          displays.contains(where: { $0.current == space && $0.spaces.contains(where: { $0.id == space && $0.type == 0 }) }) else {
+                        throw AppFailure("前台没有可放大的普通桌面窗口。")
+                    }
+                    if self.zoomed[space]?.window.identity == window.identity {
+                        try await self.restoreZoom(for: window)
+                        self.report("已恢复窗口布局")
+                    } else {
+                        if let previous = self.zoomed[space] { try await self.restoreZoom(for: previous.window) }
+                        // Keep the tree intact; refresh pauses this Space's other tiles while zoomed.
+                        let saved = AX.frame(window.element) ?? window.frame
+                        self.zoomed[space] = ZoomedWindow(window: window, restoreFrame: saved)
+                        guard try await AX.applyFrames([(window.element, screen.axVisibleFrame)]) else {
+                            self.zoomed.removeValue(forKey: space)
+                            _ = try await AX.applyFrames([(window.element, saved)])
+                            throw AppFailure("该窗口的尺寸限制不允许铺满屏幕。")
+                        }
+                        _ = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
+                        self.report("窗口已铺满当前桌面；⌥Return 恢复")
+                    }
+                case .swap(let direction):
+                    if let window = self.focusedWindow() { try await self.restoreZoom(for: window) }
+                    try self.swap(direction)
                 }
             } catch is CancellationError { /* stop/quit cancels transitions */ }
             catch { self.report(error.localizedDescription, error: true) }
@@ -134,6 +166,21 @@ import YabaibyeCore
         for display in displays {
             guard display.spaces.first(where: { $0.id == display.current })?.type == 0,
                   let screen = spaces.screen(for: display) else { continue }
+            if let zoom = zoomed[display.current] {
+                let source = zoom.window
+                if spaces.memberships(source.id) == [display.current], let frame = AX.frame(source.element),
+                   Windows.screen(for: frame)?.displayID == screen.displayID {
+                    if AX.value(source.element, kAXMinimizedAttribute) as? Bool != true,
+                       AX.value(source.element, "AXFullScreen") as? Bool != true,
+                       (abs(frame.minX - screen.axVisibleFrame.minX) > 3 || abs(frame.minY - screen.axVisibleFrame.minY) > 3 ||
+                        abs(frame.width - screen.axVisibleFrame.width) > 3 || abs(frame.height - screen.axVisibleFrame.height) > 3) {
+                        requests.append((source.element, screen.axVisibleFrame))
+                    }
+                    continue
+                }
+                zoomed.removeValue(forKey: display.current)
+                signatures.removeValue(forKey: display.current)
+            }
             let members = windows.filter {
                 floating[$0.identity] == nil && spaces.memberships($0.id) == [display.current] && Windows.screen(for: $0.frame)?.displayID == screen.displayID
             }
@@ -168,6 +215,14 @@ import YabaibyeCore
             catch { self.report(error.localizedDescription, error: true) }
         }
     }
+    private func restoreZoom(for window: ManagedWindow) async throws {
+        guard let entry = zoomed.first(where: { $0.value.window.identity == window.identity }) else { return }
+        guard try await AX.applyFrames([(window.element, entry.value.restoreFrame)]) else {
+            throw AppFailure("窗口暂时无法恢复原尺寸，请重试。")
+        }
+        zoomed.removeValue(forKey: entry.key)
+        signatures.removeValue(forKey: entry.key)
+    }
     private func swap(_ direction: Direction) throws {
         guard let window = self.focusedWindow(), floating[window.identity] == nil,
               let space = spaces.memberships(window.id).first,
@@ -184,13 +239,13 @@ import YabaibyeCore
     private func captureDrag(at point: CGPoint) -> TileDragContext? {
         guard enabled, !busy, !isLayingOut, AXIsProcessTrusted(), spaces.missionControl() == nil,
               let window = focusedWindow(), floating[window.identity] == nil,
-              let space = spaces.memberships(window.id).first,
+              let space = spaces.memberships(window.id).first, zoomed[space] == nil,
               let members = tiledWindows[space], let source = members.first(where: { $0.identity == window.identity }),
               source.frame.contains(point) else { return nil }
         return TileDragContext(space: space, source: source, candidates: members)
     }
     private func validateDrag(_ context: TileDragContext) -> Bool {
-        guard enabled, !busy, !isLayingOut, AXIsProcessTrusted(), spaces.missionControl() == nil,
+        guard enabled, !busy, !isLayingOut, zoomed[context.space] == nil, AXIsProcessTrusted(), spaces.missionControl() == nil,
               let display = try? spaces.snapshot().first(where: { $0.current == context.space }),
               display.spaces.first(where: { $0.id == context.space })?.type == 0,
               spaces.memberships(context.source.id) == [context.space],
