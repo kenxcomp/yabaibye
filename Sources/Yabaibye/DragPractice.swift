@@ -28,7 +28,7 @@ import AppKit
             let root = AXUIElementCreateApplication(getpid())
             return (AX.value(root, kAXWindowsAttribute) as? [AXUIElement] ?? []).compactMap { Windows.make($0, pid: getpid()) }
                 .filter { item in self.windows.contains { UInt32($0.windowNumber) == item.id } }
-        })
+        }, persistLayouts: false)
         self.manager = manager
         do { try manager.start() } catch { finish(); throw error }
     }

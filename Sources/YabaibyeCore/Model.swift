@@ -41,28 +41,38 @@ public enum SpaceRouter {
         return SpaceTarget(display: display, desktop: display.spaces[next], missionControlIndex: next)
     }
 }
-public enum Direction: String, CaseIterable { case left, right, up, down }
-public enum Command: Equatable {
+public enum Direction: String, CaseIterable, Codable { case left, right, up, down }
+public enum Command: Equatable, Codable {
     case focusSpace(Int), moveToSpace(Int), toggleFloat, toggleZoom
     case cycle(Int, secondary: Bool), swap(Direction)
 }
-public struct Binding {
+public struct Binding: Equatable, Codable {
     public let keyCode: UInt32
     public let shift: Bool
     public let control: Bool
+    public let option: Bool
+    public let cmd: Bool
     public let command: Command
-    public init(_ keyCode: UInt32, shift: Bool = false, control: Bool = false, command: Command) {
-        self.keyCode = keyCode; self.shift = shift; self.control = control; self.command = command
+    public init(_ keyCode: UInt32, shift: Bool = false, control: Bool = false, option: Bool = true, cmd: Bool = false, command: Command) {
+        self.keyCode = keyCode; self.shift = shift; self.control = control; self.option = option; self.cmd = cmd; self.command = command
     }
     public var label: String {
-        let names: [UInt32: String] = [0: "A", 11: "B", 8: "C", 2: "D", 14: "E", 3: "F", 5: "G", 4: "H", 34: "I",
-            18: "1", 19: "2", 20: "3", 21: "4", 23: "5", 22: "6", 26: "7", 28: "8", 25: "9",
-            36: "Return", 17: "T", 33: "[", 30: "]", 123: "←", 124: "→", 126: "↑", 125: "↓"]
-        return (control ? "⌃" : "") + "⌥" + (shift ? "⇧" : "") + (names[keyCode] ?? String(keyCode))
+        (control ? "⌃" : "") + (option ? "⌥" : "") + (shift ? "⇧" : "") + (cmd ? "⌘" : "") + (Self.keyNames[keyCode] ?? String(keyCode))
+    }
+    public static let keyNames: [UInt32: String] = [0:"A",1:"S",2:"D",3:"F",4:"H",5:"G",6:"Z",7:"X",8:"C",9:"V",11:"B",12:"Q",13:"W",14:"E",15:"R",16:"Y",17:"T",18:"1",19:"2",20:"3",21:"4",22:"6",23:"5",24:"=",25:"9",26:"7",27:"-",28:"8",29:"0",30:"]",31:"O",32:"U",33:"[",34:"I",35:"P",36:"Return",37:"L",38:"J",39:"'",40:"K",41:";",42:"\\",43:",",44:"/",45:"N",46:"M",47:".",48:"Tab",49:"Space",50:"`",51:"Delete",53:"Escape",123:"←",124:"→",125:"↓",126:"↑"]
+    public var actionLabel: String {
+        switch command {
+        case .focusSpace(let n): return "切换到 Space \(n)"
+        case .moveToSpace(let n): return "移窗到 Space \(n)"
+        case .toggleFloat: return "平铺 / 浮动"
+        case .toggleZoom: return "铺满桌面 / 恢复"
+        case .cycle(let n, let secondary): return (secondary ? "第二屏幕" : "当前屏幕") + (n < 0 ? "：上个 Space" : "：下个 Space")
+        case .swap(let direction): return "交换窗口：" + [Direction.left:"←", .right:"→", .up:"↑", .down:"↓"][direction]!
+        }
     }
     public static let defaults: [Binding] = {
-        // Physical ANSI a...i; independent of the active input method.
-        let letters: [UInt32] = [0, 11, 8, 2, 14, 3, 5, 4, 34]
+        // Physical ANSI home row; independent of the active input method.
+        let letters: [UInt32] = [0, 1, 2, 3, 5, 4, 38, 40, 37]
         var items = letters.enumerated().flatMap { i, code in
             [Binding(code, command: .focusSpace(i + 1)), Binding(code, shift: true, command: .moveToSpace(i + 1))]
         }

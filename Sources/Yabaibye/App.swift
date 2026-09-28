@@ -10,6 +10,8 @@ import YabaibyeCore
     private var statusItem: NSMenuItem?
     private var helpStatus: NSTextField?
     private let spacingSettings = SpacingSettings()
+    private let shortcutSettings = ShortcutSettings()
+    private var helpKeys: NSTextField?
     private let foregroundKeeper = ForegroundKeeper()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -50,9 +52,10 @@ import YabaibyeCore
         menu.addItem(.separator())
         add(manager.enabled ? "暂停窗口管理" : "启用窗口管理", to: menu, action: #selector(toggle))
         add("平铺留白…", to: menu, action: #selector(showSpacingSettings))
+        add("快捷键设置…", to: menu, action: #selector(showShortcutSettings))
         let foreground = add("保持前台窗口在上层", to: menu, action: #selector(toggleForeground))
         foreground.state = ForegroundKeeper.enabled ? .on : .off
-        add("放大 / 恢复当前窗口（⌥Return）", to: menu, action: #selector(toggleZoom))
+        add("放大 / 恢复当前窗口（\(ShortcutPreferences.load().first { $0.command == .toggleZoom }!.label)）", to: menu, action: #selector(toggleZoom))
         add("重新平铺当前桌面", to: menu, action: #selector(retile))
         if let displays = try? manager.spaces.snapshot() {
             let submenu = NSMenu()
@@ -70,6 +73,7 @@ import YabaibyeCore
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         add("使用说明与快捷键…", to: menu, action: #selector(showHelp))
         add("拖拽布局练习…", to: menu, action: #selector(runDragPractice))
+        add("布局自检（不切换桌面）", to: menu, action: #selector(runLayoutSmokeTest))
         add("运行窗口与 Space 自检…", to: menu, action: #selector(runSmokeTest))
         add("查看上次自检结果…", to: menu, action: #selector(showLastSmokeTest))
         add("复制诊断信息", to: menu, action: #selector(copyDiagnostics))
@@ -89,6 +93,21 @@ import YabaibyeCore
     @objc func showSpacingSettings() {
         spacingSettings.onChange = { [weak self] in self?.manager.refresh(force: true) }
         spacingSettings.show()
+    }
+    @objc func showShortcutSettings() {
+        guard smokeTest == nil, practice == nil else { manager.report("请先结束练习或自检再修改快捷键"); return }
+        shortcutSettings.onSave = { [weak self] bindings in
+            guard let self else { return }
+            guard self.smokeTest == nil, self.practice == nil else { throw AppFailure("请先结束练习或自检。") }
+            try self.manager.applyShortcuts(bindings)
+            self.helpKeys?.stringValue = self.shortcutSummary
+        }
+        shortcutSettings.show()
+    }
+    private var shortcutSummary: String {
+        let bindings = ShortcutPreferences.load()
+        let focus = bindings.filter { if case .focusSpace = $0.command { return true }; return false }.map(\.label).joined(separator: " ")
+        return "Space 1–9：\(focus)\n全部操作的当前键位与修改入口：‘快捷键设置…’。"
     }
     @objc func toggleZoom() { manager.execute(.toggleZoom) }
     @objc func retile() { manager.refresh(force: true) }
@@ -151,13 +170,17 @@ import YabaibyeCore
         } catch { self.practice = nil; showError(error) }
     }
     private var smokeTest: SmokeTest?
-    @objc func runSmokeTest() {
+    @objc func runLayoutSmokeTest() { performSmokeTest(layoutOnly: true) }
+    @objc func runSmokeTest() { performSmokeTest(layoutOnly: false) }
+    private func performSmokeTest(layoutOnly: Bool) {
         guard smokeTest == nil, practice == nil else { return }
-        if manager.enabled { manager.stop() }
+        let resume = manager.enabled
+        if resume { manager.stop() }
         let test = SmokeTest()
         smokeTest = test
-        test.run { [weak self] report in
+        test.run(layoutOnly: layoutOnly) { [weak self] report in
             self?.smokeTest = nil
+            if layoutOnly, resume { try? self?.manager.start() }
             UserDefaults.standard.set(report, forKey: "lastSmokeTestReport")
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "lastSmokeTestTime")
             self?.manager.report(report.contains("FAIL：") ? "自检未通过；可从菜单查看结果" : "自检完成；可从菜单查看结果")
@@ -178,8 +201,9 @@ import YabaibyeCore
         title.font = .systemFont(ofSize: 26, weight: .bold); stack.addArrangedSubview(title)
         let subtitle = NSTextField(wrappingLabelWithString: "原生 Space · 自动平铺 · 独立快捷键\n不需要关闭 SIP，不依赖 yabai 或 skhd。")
         subtitle.textColor = .secondaryLabelColor; stack.addArrangedSubview(subtitle)
-        let keys = NSTextField(wrappingLabelWithString: "⌥ A … I              跳转 Space 1–9\n⌥ ⇧ A … I          将前台窗口移到 Space 1–9\n⌥ T                       前台窗口：平铺 / 浮动\n⌥ Return              铺满当前桌面 / 恢复\n⌥ [ / ]                  当前屏幕：上一个 / 下一个 Space\n⌥ ⇧ [ / ]              第二屏幕：上一个 / 下一个 Space\n⌥ ← ↑ ↓ →         与该方向的平铺窗口交换")
-        keys.font = .monospacedSystemFont(ofSize: 14, weight: .regular); stack.addArrangedSubview(keys)
+        let keys = NSTextField(wrappingLabelWithString: shortcutSummary)
+        keys.font = .monospacedSystemFont(ofSize: 14, weight: .regular); stack.addArrangedSubview(keys); helpKeys = keys
+        stack.addArrangedSubview(NSButton(title: "快捷键设置…", target: self, action: #selector(showShortcutSettings)))
         let details = NSTextField(wrappingLabelWithString: "首次使用：授予辅助功能权限，再从菜单栏启用。请先停止 yabai / skhd，并开启‘显示器具有单独的空间’。建议关闭‘根据最近使用情况自动重新排列空间’。\n\n桌面跨屏统一编号，不含全屏应用；相邻切换到边界即停止。Space 切换必要时会短暂显示 Mission Control；移窗后保持当前桌面。当前版本的原生 Space 操作需在你的系统上验收。")
         details.font = .systemFont(ofSize: 12); details.textColor = .secondaryLabelColor; stack.addArrangedSubview(details)
         let buttons = NSStackView(); buttons.orientation = .horizontal; buttons.spacing = 10
@@ -187,6 +211,7 @@ import YabaibyeCore
         buttons.addArrangedSubview(NSButton(title: "启用 / 暂停管理", target: self, action: #selector(toggle)))
         buttons.addArrangedSubview(NSButton(title: "运行窗口与 Space 自检", target: self, action: #selector(runSmokeTest)))
         stack.addArrangedSubview(buttons)
+        stack.addArrangedSubview(NSButton(title: "布局自检（不切换桌面）", target: self, action: #selector(runLayoutSmokeTest)))
         stack.addArrangedSubview(NSButton(title: "平铺留白…", target: self, action: #selector(showSpacingSettings)))
         stack.addArrangedSubview(NSButton(title: "拖拽布局练习（仅测试窗口）", target: self, action: #selector(runDragPractice)))
         let status = NSTextField(wrappingLabelWithString: manager.status); status.textColor = .secondaryLabelColor

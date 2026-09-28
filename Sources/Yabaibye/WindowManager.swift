@@ -12,6 +12,8 @@ import YabaibyeCore
     private var isLayingOut = false
     private var pendingCommand: Command?
     private var layouts: [UInt64: TileLayout] = [:]
+    private var persistence: LayoutPersistence?
+    private var layoutDisplays: [UInt64: String] = [:]
     private var tiledWindows: [UInt64: [ManagedWindow]] = [:]
     private var renderedLayouts: [UInt64: TileLayout] = [:]
     private let drag = DragTiling()
@@ -32,12 +34,44 @@ import YabaibyeCore
     private let focusedWindow: @MainActor () -> ManagedWindow?
     var isIdle: Bool { !busy && !isLayingOut }
     init(visibleWindows: @escaping @MainActor () -> [ManagedWindow] = { Windows.visible() },
-         focusedWindow: @escaping @MainActor () -> ManagedWindow? = { Windows.focused() }) {
+         focusedWindow: @escaping @MainActor () -> ManagedWindow? = { Windows.focused() },
+         persistLayouts: Bool = true, layoutStore: LayoutPersistence? = nil) {
+        persistence = layoutStore
+        if persistLayouts, layoutStore == nil {
+            // Scope WindowServer identities to this boot and loginwindow process.
+            var size = 0
+            sysctlbyname("kern.bootsessionuuid", nil, &size, nil, 0)
+            var buffer = [CChar](repeating: 0, count: max(size, 1))
+            let valid = sysctlbyname("kern.bootsessionuuid", &buffer, &size, nil, 0) == 0
+            let login = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.loginwindow").first?.processIdentifier
+            if valid, let login { persistence = LayoutPersistence(session: "\(String(cString: buffer)):\(getuid()):\(login)") }
+        }
         self.visibleWindows = visibleWindows; self.focusedWindow = focusedWindow
         hotkeys.onCommand = { [weak self] command in self?.execute(command) }
         drag.capture = { [weak self] point in self?.captureDrag(at: point) }
         drag.validate = { [weak self] context in self?.validateDrag(context) == true }
         drag.commit = { [weak self] context, target, zone in self?.finishDrag(context, target: target, zone: zone) }
+    }
+    func applyShortcuts(_ bindings: [Binding]) throws {
+        if let error = ShortcutPreferences.validate(bindings) { throw AppFailure(error) }
+        let previous = ShortcutPreferences.load()
+        do {
+            try hotkeys.start(bindings: bindings)
+            if !enabled { hotkeys.stop() }
+        } catch {
+            let original = error
+            if enabled {
+                do { try hotkeys.start(bindings: previous) }
+                catch { stop(); throw AppFailure("新快捷键注册失败，旧快捷键也无法恢复；窗口管理已暂停。") }
+            }
+            throw original
+        }
+        ShortcutPreferences.save(bindings)
+        report(enabled ? "快捷键已保存并生效" : "快捷键已保存，启用管理后生效")
+    }
+    private func persist(_ space: UInt64) {
+        guard let layout = layouts[space], let display = layoutDisplays[space] else { return }
+        persistence?.save(layout, display: display, space: space)
     }
     func start() throws {
         guard !enabled else { return }
@@ -145,7 +179,7 @@ import YabaibyeCore
                             throw AppFailure("该窗口的尺寸限制不允许铺满屏幕。")
                         }
                         _ = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
-                        self.report("窗口已铺满当前桌面；⌥Return 恢复")
+                        self.report("窗口已铺满当前桌面；再次按放大快捷键恢复")
                     }
                 case .swap(let direction):
                     if let window = self.focusedWindow() { try await self.restoreZoom(for: window) }
@@ -186,9 +220,11 @@ import YabaibyeCore
             }
             tiledWindows[display.current] = members
             let ids = members.map(\.identity).sorted()
-            var layout = layouts[display.current] ?? TileLayout(ids: ids)
+            layoutDisplays[display.current] = display.uuid
+            var layout = layouts[display.current] ?? persistence?.layout(display: display.uuid, space: display.current) ?? TileLayout(ids: ids)
             layout.reconcile(ids)
             layouts[display.current] = layout
+            persist(display.current)
             let signature = "\(screen.axVisibleFrame)@\(spacing.padding):\(spacing.gap)"
             guard force || renderedLayouts[display.current] != layout || signatures[display.current] != signature else { continue }
             let frames = layout.frames(in: screen.axVisibleFrame, gap: CGFloat(spacing.gap), padding: CGFloat(spacing.padding))
@@ -210,7 +246,7 @@ import YabaibyeCore
                 if let command = self.pendingCommand { self.pendingCommand = nil; self.execute(command) }
             }
             do {
-                if try await !AX.applyFrames(requests) { self.report("部分窗口有尺寸限制或拒绝调整；可用 ⌥T 将其浮动。", error: true) }
+                if try await !AX.applyFrames(requests) { self.report("部分窗口有尺寸限制或拒绝调整；可将其设为浮动。", error: true) }
             } catch is CancellationError { }
             catch { self.report(error.localizedDescription, error: true) }
         }
@@ -234,6 +270,7 @@ import YabaibyeCore
         guard let next = Layout.neighbor(of: index, direction: direction, frames: frames) else { report("该方向没有平铺窗口"); return }
         layout.drop(window.identity, onto: layout.ids[next], zone: .center)
         layouts[space] = layout
+        persist(space)
         report("已交换窗口位置")
     }
     private func captureDrag(at point: CGPoint) -> TileDragContext? {
@@ -257,6 +294,7 @@ import YabaibyeCore
         if let target, let zone, var layout = layouts[context.space],
            layout.drop(context.source.identity, onto: target, zone: zone) {
             layouts[context.space] = layout
+            persist(context.space)
             report(zone == .center ? "已交换窗口位置" : "已重新分区平铺")
         }
         // Dropping outside a tile returns the source to its existing tile.

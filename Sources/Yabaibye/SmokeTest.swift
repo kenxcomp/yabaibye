@@ -9,7 +9,7 @@ import YabaibyeCore
     private let spaces = Spaces()
     private var task: Task<Void, Never>?
     func cancel() { task?.cancel() }
-    func run(completion: @escaping (String) -> Void) {
+    func run(layoutOnly: Bool = false, completion: @escaping (String) -> Void) {
         guard AXIsProcessTrusted() else { completion("未执行：请先授予 Yabaibye 辅助功能权限。"); return }
         guard WindowManager.conflicts().isEmpty else { completion("未执行：请先停止 yabai/skhd。"); return }
         task = Task { @MainActor in
@@ -45,9 +45,12 @@ import YabaibyeCore
                 }
                 results.append("PASS：真实 AX 窗口移动和缩放")
                 // Run production command handling against only the owned fixtures.
+                let suiteName = "Yabaibye.LayoutSelfTest.\(UUID().uuidString)"
+                let testDefaults = UserDefaults(suiteName: suiteName)!
+                defer { testDefaults.removePersistentDomain(forName: suiteName) }
                 let fixtureManager = WindowManager(visibleWindows: {
                     managed.compactMap { Windows.make($0.element, pid: $0.pid) }
-                }, focusedWindow: { Windows.make(managed[0].element, pid: managed[0].pid) })
+                }, focusedWindow: { Windows.make(managed[0].element, pid: managed[0].pid) }, persistLayouts: false, layoutStore: LayoutPersistence(session: "test", defaults: testDefaults))
                 do {
                     defer { fixtureManager.stop() }
                     try fixtureManager.start()
@@ -90,6 +93,23 @@ import YabaibyeCore
                     guard let a = AX.frame(row[0].element), let b = AX.frame(row[1].element), let c = AX.frame(row[2].element),
                           abs(a.minX - b.minX) < 3, a.minY > b.minY, c.minX > b.minX,
                           abs(a.width - c.width) < 3, abs(a.height - b.height) < 3 else { throw AppFailure("三列转左侧上下分区的实际位置不匹配") }
+                    fixtureManager.stop()
+                    let restarted = WindowManager(visibleWindows: {
+                        managed.compactMap { Windows.make($0.element, pid: $0.pid) }
+                    }, persistLayouts: false, layoutStore: LayoutPersistence(session: "test", defaults: UserDefaults(suiteName: suiteName)!))
+                    do {
+                        defer { restarted.stop() }
+                        try restarted.start()
+                        try await waitForIdle(restarted)
+                        for (window, expected) in zip(row, [a, b, c]) {
+                            guard let frame = AX.frame(window.element), abs(frame.minX - expected.minX) < 3,
+                                  abs(frame.minY - expected.minY) < 3, abs(frame.width - expected.width) < 3,
+                                  abs(frame.height - expected.height) < 3 else { throw AppFailure("管理器重建后丢失手动分区") }
+                        }
+                    }
+                    results.append("PASS：从独立偏好存储重建管理器后，左侧 B/A、右侧 C 的实际窗口分区保持")
+                    try fixtureManager.start()
+                    try await waitForIdle(fixtureManager)
                     let fresh = row.compactMap { Windows.make($0.element, pid: $0.pid) }
                     fixtureManager.finishDrag(TileDragContext(space: space, source: fresh[0], candidates: fresh), target: fresh[2].identity, zone: .right)
                     try await waitForIdle(fixtureManager)
@@ -101,6 +121,7 @@ import YabaibyeCore
                     }
                     results.append("PASS：拖拽落点命令 III → 左侧 B/A → B/C/A 等宽三列（实际 AX 几何）")
                 }
+                if !layoutOnly {
                 if let first = SpaceRouter.numbered(1, displays: try spaces.snapshot()),
                    let third = SpaceRouter.numbered(3, displays: try spaces.snapshot()),
                    first.display.uuid == third.display.uuid {
@@ -141,9 +162,10 @@ import YabaibyeCore
                 }
                 try await spaces.move(focused, to: SpaceTargetForTest.make(returnDisplay, returnIndex))
                 results.append("PASS：测试窗口移回原 Space")
+                }
             } catch { results.append("FAIL：\(error.localizedDescription)") }
             windows.forEach { $0.close() }; windows.removeAll()
-            for display in original where !Task.isCancelled {
+            for display in original where !Task.isCancelled && !layoutOnly {
                 do { try await restore(display) } catch { results.append("恢复桌面失败：\(error.localizedDescription)") }
             }
             previousApp?.activate(options: [])

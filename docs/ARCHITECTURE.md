@@ -14,10 +14,13 @@
 
 权限仅为辅助功能；不读取窗口内容或标题作为持久化日志，不发送网络请求。标准 macOS 登录项通过 `SMAppService` 管理。
 
-当前阶段不包含：自定义快捷键、复杂布局配置、跨重启窗口身份持久化、Space 自动创建/删除、窗口透明度、动画关闭、焦点跟随鼠标。
+当前阶段不包含：任意分区比例配置、电脑重启或窗口重建后的身份匹配、Space 自动创建/删除、窗口透明度、动画关闭、焦点跟随鼠标。
 
 窗口帧调整会临时关闭目标进程的 AXEnhancedUserInterface（仅当原来开启时），在结束/取消时恢复；这是避免辅助功能动画干扰几何更新的兼容处理。尺寸、位置、尺寸分阶段提交并等待稳定后读取实际值验证。
 
 - `LayoutSpacing`：两个独立的 0–100 pt 偏好，UserDefaults 保存并校验；布局签名包含留白，因此忙碌时延迟的修改会在下次刷新应用。
 - `SpacingSettings`：原生滑块/数值输入与缩放预览；不另存一份布局状态。
 - `ForegroundPolicy` / `ForegroundKeeper`：按前后顺序与几何重叠判断普通后台窗口遮挡；只 Raise 当前前台焦点窗口，重新检查前台 PID 后执行，不激活应用或更改窗口等级。系统浮层及当前应用自己的窗口优先保留。
+
+- `ShortcutPreferences` / `ShortcutSettings`：28 项操作的可持久化物理键位与修饰键；先验证完整命令表及去重，再注册新组合，失败回滚旧注册。帮助页及放大菜单从当前配置生成。
+- `LayoutPersistence`：保存 Codable 分区树及 customized 标记，以显示器 UUID + Space ID 分区，boot UUID / loginwindow PID / UID 限定会话；只存窗口 PID/ID，不存窗口标题。刷新成员变化、拖拽、方向交换后保存。恢复后重算当前屏幕几何。练习不持久化，自检注入独立 UserDefaults suite，不覆盖用户布局。

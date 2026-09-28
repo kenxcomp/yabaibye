@@ -25,7 +25,7 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(bindings.count, 28)
         XCTAssertEqual(Set(bindings.map { "\($0.keyCode):\($0.shift):\($0.control)" }).count, 28)
         XCTAssertEqual(bindings.first { $0.keyCode == 36 }?.command, .toggleZoom)
-        let letters: [UInt32] = [0, 11, 8, 2, 14, 3, 5, 4, 34]
+        let letters: [UInt32] = [0, 1, 2, 3, 5, 4, 38, 40, 37]
         for (i, key) in letters.enumerated() {
             XCTAssertEqual(bindings.first { $0.keyCode == key && !$0.shift }?.command, .focusSpace(i + 1))
             XCTAssertEqual(bindings.first { $0.keyCode == key && $0.shift }?.command, .moveToSpace(i + 1))

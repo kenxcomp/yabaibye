@@ -24,9 +24,9 @@ public enum DropZone: String, CaseIterable {
 
 /// Equal-weight sibling regions. Removing a leaf collapses empty/one-child groups;
 /// adjacent groups of the same axis flatten so extracting a nested tile rebalances its row.
-public struct TileLayout: Equatable {
-    public enum Axis: Equatable { case horizontal, vertical }
-    public indirect enum Node: Equatable {
+public struct TileLayout: Equatable, Codable {
+    public enum Axis: Equatable, Codable { case horizontal, vertical }
+    public indirect enum Node: Equatable, Codable {
         case window(String)
         case split(Axis, [Node])
         var ids: [String] {
