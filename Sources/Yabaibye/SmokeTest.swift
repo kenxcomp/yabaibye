@@ -109,7 +109,11 @@ import YabaibyeCore
                 do { try await restore(display) } catch { results.append("恢复桌面失败：\(error.localizedDescription)") }
             }
             previousApp?.activate(options: [])
-            results.append("SIP 完整开启后的兼容性：需重启开启 SIP 后再自检")
+            if AppDelegate.sipStatus() == "System Integrity Protection status: enabled." {
+                results.append("SIP 状态：完整开启（以上为当前配置实测）")
+            } else {
+                results.append("SIP 尚未确认完整开启；开启后请重新运行自检")
+            }
             if !Task.isCancelled { completion(results.joined(separator: "\n")) }
         }
     }

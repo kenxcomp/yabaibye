@@ -89,10 +89,21 @@ import YabaibyeCore
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(Self.diagnostics(), forType: .string)
         manager.report("诊断信息已复制（不含窗口标题）")
     }
+    static func sipStatus() -> String {
+        let process = Process(); process.executableURL = URL(fileURLWithPath: "/usr/bin/csrutil")
+        process.arguments = ["status"]
+        let output = Pipe(); process.standardOutput = output; process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return "unavailable" }
+            return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "unavailable"
+        } catch { return "unavailable" }
+    }
     static func diagnostics() -> String {
         let spaces = Spaces()
         var data: [String: Any] = [
-            "version": "0.1.0", "os": ProcessInfo.processInfo.operatingSystemVersionString,
+            "sipStatus": sipStatus(), "version": "0.1.0", "os": ProcessInfo.processInfo.operatingSystemVersionString,
             "accessibilityTrusted": AXIsProcessTrusted(), "postEventsAllowed": CGPreflightPostEventAccess(),
             "spaceReadSymbols": YBHasSpaceReadAPI(), "spaceMoveSymbols": YBHasWindowMoveAPI(), "bridgedWindowMoveAPI": YBHasBridgedWindowMoveAPI(),
             "separateSpaces": NSScreen.screensHaveSeparateSpaces, "conflictingProcesses": WindowManager.conflicts(),
