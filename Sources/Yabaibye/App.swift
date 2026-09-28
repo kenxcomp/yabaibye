@@ -9,6 +9,8 @@ import YabaibyeCore
     private var helpWindow: NSWindow?
     private var statusItem: NSMenuItem?
     private var helpStatus: NSTextField?
+    private let spacingSettings = SpacingSettings()
+    private let foregroundKeeper = ForegroundKeeper()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Raw CLI diagnostics are read-only and never register keys or change layouts.
@@ -22,6 +24,7 @@ import YabaibyeCore
         item.button?.title = "YB Ⅱ"
         item.button?.toolTip = "Yabaibye — 原生 Space 与窗口平铺"
         let menu = NSMenu(); menu.delegate = self; item.menu = menu
+        foregroundKeeper.start()
         manager.changed = { [weak self] in
             guard let self else { return }
             self.item.button?.title = self.manager.enabled ? "YB" : "YB Ⅱ"
@@ -46,6 +49,9 @@ import YabaibyeCore
         statusItem = add(manager.status, to: menu)
         menu.addItem(.separator())
         add(manager.enabled ? "暂停窗口管理" : "启用窗口管理", to: menu, action: #selector(toggle))
+        add("平铺留白…", to: menu, action: #selector(showSpacingSettings))
+        let foreground = add("保持前台窗口在上层", to: menu, action: #selector(toggleForeground))
+        foreground.state = ForegroundKeeper.enabled ? .on : .off
         add("重新平铺当前桌面", to: menu, action: #selector(retile))
         if let displays = try? manager.spaces.snapshot() {
             let submenu = NSMenu()
@@ -64,6 +70,7 @@ import YabaibyeCore
         add("使用说明与快捷键…", to: menu, action: #selector(showHelp))
         add("拖拽布局练习…", to: menu, action: #selector(runDragPractice))
         add("运行窗口与 Space 自检…", to: menu, action: #selector(runSmokeTest))
+        add("查看上次自检结果…", to: menu, action: #selector(showLastSmokeTest))
         add("复制诊断信息", to: menu, action: #selector(copyDiagnostics))
         menu.addItem(.separator())
         add("退出 Yabaibye", to: menu, action: #selector(quit), key: "q")
@@ -76,6 +83,11 @@ import YabaibyeCore
         guard smokeTest == nil, practice == nil else { manager.report("请等待自检结束"); return }
         if manager.enabled { manager.stop() }
         else { do { try manager.start() } catch { showError(error) } }
+    }
+    @objc func toggleForeground() { ForegroundKeeper.enabled.toggle() }
+    @objc func showSpacingSettings() {
+        spacingSettings.onChange = { [weak self] in self?.manager.refresh(force: true) }
+        spacingSettings.show()
     }
     @objc func retile() { manager.refresh(force: true) }
     @objc func selectSpace(_ sender: NSMenuItem) { manager.execute(.focusSpace(sender.tag)) }
@@ -108,6 +120,7 @@ import YabaibyeCore
     static func diagnostics() -> String {
         let spaces = Spaces()
         var data: [String: Any] = [
+            "keepForegroundOnTop": ForegroundKeeper.enabled, "tilingPadding": LayoutSpacing.load().padding, "tilingGap": LayoutSpacing.load().gap,
             "sipStatus": sipStatus(), "version": "0.1.0", "os": ProcessInfo.processInfo.operatingSystemVersionString,
             "accessibilityTrusted": AXIsProcessTrusted(), "postEventsAllowed": CGPreflightPostEventAccess(),
             "spaceReadSymbols": YBHasSpaceReadAPI(), "spaceMoveSymbols": YBHasWindowMoveAPI(), "bridgedWindowMoveAPI": YBHasBridgedWindowMoveAPI(),
@@ -145,13 +158,17 @@ import YabaibyeCore
             self?.smokeTest = nil
             UserDefaults.standard.set(report, forKey: "lastSmokeTestReport")
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "lastSmokeTestTime")
-            let alert = NSAlert(); alert.messageText = "自检结果"; alert.informativeText = report
-            if let self { self.showHelp(); alert.beginSheetModal(for: self.helpWindow!) }
+            self?.manager.report(report.contains("FAIL：") ? "自检未通过；可从菜单查看结果" : "自检完成；可从菜单查看结果")
         }
+    }
+    @objc func showLastSmokeTest() {
+        let alert = NSAlert(); alert.messageText = "上次自检结果"
+        alert.informativeText = UserDefaults.standard.string(forKey: "lastSmokeTestReport") ?? "尚未运行自检。"
+        showHelp(); alert.beginSheetModal(for: helpWindow!)
     }
     @objc func showHelp() {
         if let helpWindow { helpWindow.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 580), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 620), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Yabaibye"; window.isReleasedWhenClosed = false; window.center()
         let stack = NSStackView(); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 18
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -168,6 +185,7 @@ import YabaibyeCore
         buttons.addArrangedSubview(NSButton(title: "启用 / 暂停管理", target: self, action: #selector(toggle)))
         buttons.addArrangedSubview(NSButton(title: "运行窗口与 Space 自检", target: self, action: #selector(runSmokeTest)))
         stack.addArrangedSubview(buttons)
+        stack.addArrangedSubview(NSButton(title: "平铺留白…", target: self, action: #selector(showSpacingSettings)))
         stack.addArrangedSubview(NSButton(title: "拖拽布局练习（仅测试窗口）", target: self, action: #selector(runDragPractice)))
         let status = NSTextField(wrappingLabelWithString: manager.status); status.textColor = .secondaryLabelColor
         helpStatus = status; stack.addArrangedSubview(status)
@@ -185,6 +203,7 @@ import YabaibyeCore
         if CommandLine.arguments.contains("--diagnose") { return .terminateNow }
         // Give cancellation defers a main-run-loop turn to restore temporary accessibility settings.
         let resume = manager.enabled || (practice != nil && resumeAfterPractice)
+        foregroundKeeper.stop()
         practice?.finish()
         manager.stop()
         smokeTest?.cancel()

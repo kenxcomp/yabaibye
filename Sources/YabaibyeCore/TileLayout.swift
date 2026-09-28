@@ -103,9 +103,12 @@ public struct TileLayout: Equatable {
         if zone != .center { customized = true }
         return true
     }
-    public func frames(in bounds: CGRect, gap: CGFloat = 10) -> [String: CGRect] {
+    public func frames(in bounds: CGRect, gap: CGFloat = 10, padding: CGFloat? = nil) -> [String: CGRect] {
         guard bounds.width > 0, bounds.height > 0 else { return [:] }
-        let inset = max(0, min(gap, min(bounds.width, bounds.height) / 4))
+        let requestedPadding = padding ?? gap
+        let safePadding = requestedPadding.isFinite ? max(0, requestedPadding) : 10
+        let requestedGap = gap.isFinite ? max(0, gap) : 10
+        let inset = min(safePadding, min(bounds.width, bounds.height) / 4)
         var result: [String: CGRect] = [:]
         func visit(_ node: Node, _ rect: CGRect) {
             switch node {
@@ -113,7 +116,7 @@ public struct TileLayout: Equatable {
             case .split(let axis, let children):
                 guard !children.isEmpty else { return }
                 let length = axis == .horizontal ? rect.width : rect.height
-                let safeGap = min(inset, length / CGFloat(children.count * 2))
+                let safeGap = min(requestedGap, length / CGFloat(children.count * 2))
                 let size = (length - safeGap * CGFloat(children.count - 1)) / CGFloat(children.count)
                 for (i, child) in children.enumerated() {
                     var part = rect

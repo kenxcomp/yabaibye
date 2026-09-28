@@ -129,6 +129,7 @@ import YabaibyeCore
         guard !CGEventSource.buttonState(.combinedSessionState, button: .left), spaces.missionControl() == nil,
               let displays = try? spaces.snapshot() else { return }
         let windows = visibleWindows()
+        let spacing = LayoutSpacing.load()
         var requests: [(AXUIElement, CGRect)] = []
         for display in displays {
             guard display.spaces.first(where: { $0.id == display.current })?.type == 0,
@@ -141,9 +142,9 @@ import YabaibyeCore
             var layout = layouts[display.current] ?? TileLayout(ids: ids)
             layout.reconcile(ids)
             layouts[display.current] = layout
-            let signature = "\(screen.axVisibleFrame)"
+            let signature = "\(screen.axVisibleFrame)@\(spacing.padding):\(spacing.gap)"
             guard force || renderedLayouts[display.current] != layout || signatures[display.current] != signature else { continue }
-            let frames = layout.frames(in: screen.axVisibleFrame)
+            let frames = layout.frames(in: screen.axVisibleFrame, gap: CGFloat(spacing.gap), padding: CGFloat(spacing.padding))
             for window in members {
                 guard let frame = frames[window.identity] else { continue }
                 if originalFrames[window.identity] == nil { originalFrames[window.identity] = window.frame }
@@ -172,7 +173,8 @@ import YabaibyeCore
               let space = spaces.memberships(window.id).first,
               var layout = layouts[space], let index = layout.ids.firstIndex(of: window.identity),
               let screen = Windows.screen(for: window.frame) else { throw AppFailure("前台窗口不在平铺布局中。") }
-        let geometry = layout.frames(in: screen.axVisibleFrame)
+        let spacing = LayoutSpacing.load()
+        let geometry = layout.frames(in: screen.axVisibleFrame, gap: CGFloat(spacing.gap), padding: CGFloat(spacing.padding))
         let frames = layout.ids.compactMap { geometry[$0] }
         guard let next = Layout.neighbor(of: index, direction: direction, frames: frames) else { report("该方向没有平铺窗口"); return }
         layout.drop(window.identity, onto: layout.ids[next], zone: .center)
