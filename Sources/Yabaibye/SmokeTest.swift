@@ -89,6 +89,15 @@ import YabaibyeCore
                     }
                     results.append("PASS：拖拽落点命令 III → 左侧 B/A → B/C/A 等宽三列（实际 AX 几何）")
                 }
+                if let first = SpaceRouter.numbered(1, displays: try spaces.snapshot()),
+                   let third = SpaceRouter.numbered(3, displays: try spaces.snapshot()),
+                   first.display.uuid == third.display.uuid {
+                    try await spaces.focus(first, forceMissionControl: true)
+                    let started = Date()
+                    try await spaces.focus(third, forceMissionControl: true)
+                    results.append("PASS：Space 1 → 3 直接跳转（单次目标选择，\(String(format: "%.2f", Date().timeIntervalSince(started))) 秒）")
+                    if let previous = original.first(where: { $0.uuid == first.display.uuid }) { try await restore(previous) }
+                } else { results.append("SKIP：缺少同屏的 Space 1 和 3，未执行跨桌面直接跳转测试") }
                 for display in original {
                     guard let target = SpaceRouter.adjacent(1, display: display) ?? SpaceRouter.adjacent(-1, display: display) else {
                         results.append("SKIP：屏幕只有一个 Space"); continue

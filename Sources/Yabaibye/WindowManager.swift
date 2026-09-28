@@ -91,7 +91,7 @@ import YabaibyeCore
                         try await self.spaces.move(window, to: target)
                         self.report("窗口已移到 Space \(number)")
                     } else {
-                        try await self.spaces.focus(target)
+                        try await self.spaces.focus(target, forceMissionControl: true)
                         self.report("已切换到 Space \(number)")
                     }
                 case .cycle(let delta, let secondary):
