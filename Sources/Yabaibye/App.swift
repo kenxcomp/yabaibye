@@ -8,6 +8,7 @@ import YabaibyeCore
     private var item: NSStatusItem!
     private var helpWindow: NSWindow?
     private var statusItem: NSMenuItem?
+    private var helpStatus: NSTextField?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Raw CLI diagnostics are read-only and never register keys or change layouts.
@@ -26,6 +27,7 @@ import YabaibyeCore
             self.item.button?.title = self.manager.enabled ? "YB" : "YB Ⅱ"
             self.item.button?.toolTip = self.manager.status
             self.statusItem?.title = self.manager.status
+            self.helpStatus?.stringValue = self.manager.status
         }
         if UserDefaults.standard.bool(forKey: "managerEnabled") {
             do { try manager.start() } catch { manager.report(error.localizedDescription, error: true) }
@@ -66,6 +68,7 @@ import YabaibyeCore
         entry.target = self; menu.addItem(entry); return entry
     }
     @objc func toggle() {
+        guard smokeTest == nil else { manager.report("请等待自检结束"); return }
         if manager.enabled { manager.stop() }
         else { do { try manager.start() } catch { showError(error) } }
     }
@@ -91,7 +94,7 @@ import YabaibyeCore
         var data: [String: Any] = [
             "version": "0.1.0", "os": ProcessInfo.processInfo.operatingSystemVersionString,
             "accessibilityTrusted": AXIsProcessTrusted(), "postEventsAllowed": CGPreflightPostEventAccess(),
-            "spaceReadSymbols": YBHasSpaceReadAPI(), "spaceMoveSymbols": YBHasWindowMoveAPI(),
+            "spaceReadSymbols": YBHasSpaceReadAPI(), "spaceMoveSymbols": YBHasWindowMoveAPI(), "bridgedWindowMoveAPI": YBHasBridgedWindowMoveAPI(),
             "separateSpaces": NSScreen.screensHaveSeparateSpaces, "conflictingProcesses": WindowManager.conflicts(),
             "screens": NSScreen.screens.map { ["uuid": $0.uuid, "id": $0.displayID, "frame": NSStringFromRect($0.frame)] as [String: Any] }
         ]
@@ -109,7 +112,7 @@ import YabaibyeCore
         test.run { [weak self] report in
             self?.smokeTest = nil
             let alert = NSAlert(); alert.messageText = "自检结果"; alert.informativeText = report
-            alert.runModal()
+            if let self { self.showHelp(); alert.beginSheetModal(for: self.helpWindow!) }
         }
     }
     @objc func showHelp() {
@@ -124,10 +127,15 @@ import YabaibyeCore
         subtitle.textColor = .secondaryLabelColor; stack.addArrangedSubview(subtitle)
         let keys = NSTextField(wrappingLabelWithString: "⌥ A … I              跳转 Space 1–9\n⌥ ⇧ A … I          将前台窗口移到 Space 1–9\n⌥ T                       前台窗口：平铺 / 浮动\n⌥ [ / ]                  当前屏幕：上一个 / 下一个 Space\n⌥ ⇧ [ / ]              第二屏幕：上一个 / 下一个 Space\n⌥ ← ↑ ↓ →         与该方向的平铺窗口交换")
         keys.font = .monospacedSystemFont(ofSize: 14, weight: .regular); stack.addArrangedSubview(keys)
-        let details = NSTextField(wrappingLabelWithString: "首次使用：授予辅助功能权限，再从菜单栏启用。请先停止 yabai / skhd，并开启‘显示器具有单独的空间’。建议关闭‘根据最近使用情况自动重新排列空间’。\n\n桌面跨屏统一编号，不含全屏应用；相邻切换到边界即停止。Space 切换会短暂显示 Mission Control；拖拽移窗回退会跟随到目标桌面。当前版本的原生 Space 操作需在你的系统上验收。")
+        let details = NSTextField(wrappingLabelWithString: "首次使用：授予辅助功能权限，再从菜单栏启用。请先停止 yabai / skhd，并开启‘显示器具有单独的空间’。建议关闭‘根据最近使用情况自动重新排列空间’。\n\n桌面跨屏统一编号，不含全屏应用；相邻切换到边界即停止。Space 切换必要时会短暂显示 Mission Control；移窗后保持当前桌面。当前版本的原生 Space 操作需在你的系统上验收。")
         details.font = .systemFont(ofSize: 12); details.textColor = .secondaryLabelColor; stack.addArrangedSubview(details)
-        let button = NSButton(title: "打开辅助功能设置", target: self, action: #selector(requestAccess)); stack.addArrangedSubview(button)
-        let testButton = NSButton(title: "运行窗口与 Space 自检", target: self, action: #selector(runSmokeTest)); stack.addArrangedSubview(testButton)
+        let buttons = NSStackView(); buttons.orientation = .horizontal; buttons.spacing = 10
+        buttons.addArrangedSubview(NSButton(title: "权限设置", target: self, action: #selector(requestAccess)))
+        buttons.addArrangedSubview(NSButton(title: "启用 / 暂停管理", target: self, action: #selector(toggle)))
+        buttons.addArrangedSubview(NSButton(title: "运行窗口与 Space 自检", target: self, action: #selector(runSmokeTest)))
+        stack.addArrangedSubview(buttons)
+        let status = NSTextField(wrappingLabelWithString: manager.status); status.textColor = .secondaryLabelColor
+        helpStatus = status; stack.addArrangedSubview(status)
         window.contentView?.addSubview(stack)
         NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor, constant: 28), stack.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor, constant: -28), stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 28)])
         helpWindow = window; window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
@@ -135,14 +143,15 @@ import YabaibyeCore
     private func showError(_ error: Error) {
         manager.report(error.localizedDescription, error: true)
         let alert = NSAlert(); alert.messageText = "暂时无法启用"; alert.informativeText = error.localizedDescription
-        alert.runModal()
+        showHelp(); alert.beginSheetModal(for: helpWindow!)
     }
     @objc func quit() { NSApp.terminate(nil) }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if CommandLine.arguments.contains("--diagnose") { return .terminateNow }
-        // Give cancellation defers a main-run-loop turn to release any synthetic mouse-down.
+        // Give cancellation defers a main-run-loop turn to restore temporary accessibility settings.
         let resume = manager.enabled
         manager.stop()
+        smokeTest?.cancel()
         UserDefaults.standard.set(resume, forKey: "managerEnabled")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { sender.reply(toApplicationShouldTerminate: true) }
         return .terminateLater

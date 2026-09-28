@@ -1,5 +1,7 @@
 #import "SpaceBridge.h"
 #import <dlfcn.h>
+#import <objc/runtime.h>
+#import <objc/message.h>
 
 static void *symbol(const char *name) {
     static void *handle;
@@ -16,7 +18,14 @@ static int connection(void) {
 BOOL YBHasSpaceReadAPI(void) {
     return symbol("SLSMainConnectionID") && symbol("SLSCopyManagedDisplaySpaces") && symbol("SLSCopySpacesForWindows");
 }
+BOOL YBHasBridgedWindowMoveAPI(void) {
+    symbol("SLSMainConnectionID"); // Load the framework before looking up its classes.
+    Class cls = NSClassFromString(@"SLSBridgedMoveWindowsToManagedSpaceOperation");
+    return cls && class_getInstanceMethod(cls, NSSelectorFromString(@"initWithWindows:spaceID:"))
+        && class_getInstanceMethod(cls, NSSelectorFromString(@"performWithWMBridgeDelegate"));
+}
 BOOL YBHasWindowMoveAPI(void) {
+    if (YBHasBridgedWindowMoveAPI()) return YES;
     return YBHasSpaceReadAPI() && symbol("SLSSpaceSetCompatID") && symbol("SLSSetWindowListWorkspace");
 }
 NSArray *YBCopyDisplays(void) {
@@ -28,6 +37,14 @@ NSArray<NSNumber *> *YBCopyWindowSpaces(uint32_t window) {
     return fn ? CFBridgingRelease(fn(connection(), 7, (__bridge CFArrayRef)@[@(window)])) : nil;
 }
 int YBMoveWindow(uint32_t window, uint64_t space) {
+    if (YBHasBridgedWindowMoveAPI()) {
+        Class cls = NSClassFromString(@"SLSBridgedMoveWindowsToManagedSpaceOperation");
+        SEL initialize = NSSelectorFromString(@"initWithWindows:spaceID:");
+        id operation = ((id (*)(id, SEL, NSArray *, uint64_t))objc_msgSend)([cls alloc], initialize, @[@(window)], space);
+        if (!operation) return -1;
+        ((void (*)(id, SEL))objc_msgSend)(operation, NSSelectorFromString(@"performWithWMBridgeDelegate"));
+        return 0; // Queued only. The caller must verify Space membership.
+    }
     CGError (*compat)(int, uint64_t, int) = symbol("SLSSpaceSetCompatID");
     CGError (*move)(int, uint32_t *, int, int) = symbol("SLSSetWindowListWorkspace");
     if (!YBHasWindowMoveAPI()) return -1;
@@ -49,4 +66,9 @@ uint32_t YBWindowID(AXUIElementRef element) {
     uint32_t wid = 0;
     if (fn) fn(element, &wid);
     return wid;
+}
+
+int YBToggleMissionControl(void) {
+    CGError (*fn)(CFStringRef, int) = dlsym(RTLD_DEFAULT, "CoreDockSendNotification");
+    return fn ? fn(CFSTR("com.apple.expose.awake"), 0) : -1;
 }

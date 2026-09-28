@@ -11,7 +11,9 @@ jobs:
         run: swift test
       - name: Build app bundle
         run: ./script/build_and_run.sh --build-only
+      - name: Archive app with executable permissions
+        run: ditto -c -k --sequesterRsrc --keepParent dist/Yabaibye.app dist/Yabaibye.zip
       - uses: actions/upload-artifact@v4
         with:
           name: Yabaibye-macOS
-          path: dist/Yabaibye.app
+          path: dist/Yabaibye.zip

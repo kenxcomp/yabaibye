@@ -32,10 +32,16 @@ import YabaibyeCore
             ?? (displays.count == 1 ? displays.first : nil)
     }
     func missionControl() -> AXUIElement? {
-        guard let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else { return nil }
-        let root = AXUIElementCreateApplication(dock.processIdentifier)
-        AXUIElementSetMessagingTimeout(root, 0.2)
-        return AX.descendant(root, depth: 2) { AX.identifier($0) == "mc" }
+        // macOS 27 moved mc.display groups from Dock's mc container to
+        // WindowManager's application root. Support both structures.
+        for bundle in ["com.apple.WindowManager", "com.apple.dock"] {
+            guard let process = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first else { continue }
+            let root = AXUIElementCreateApplication(process.processIdentifier)
+            AXUIElementSetMessagingTimeout(root, 0.25)
+            if let mc = AX.descendant(root, depth: 2, matching: { AX.identifier($0) == "mc" }) { return mc }
+            if AX.children(root).contains(where: { AX.identifier($0) == "mc.display" }) { return root }
+        }
+        return nil
     }
     private func list(for displayID: CGDirectDisplayID) -> AXUIElement? {
         guard let mc = missionControl(), let display = AX.descendant(mc, depth: 2, matching: {
@@ -50,15 +56,15 @@ import YabaibyeCore
     private func isCurrent(_ target: SpaceTarget) -> Bool {
         (try? snapshot().first(where: { $0.uuid == target.display.uuid })?.current) == target.desktop.id
     }
-    func focus(_ target: SpaceTarget) async throws {
+    func focus(_ target: SpaceTarget, forceMissionControl: Bool = false) async throws {
         if isCurrent(target) { return }
         guard let screen = screen(for: target.display) else { throw AppFailure("目标显示器已断开。") }
+        // Native Mission Control left/right shortcuts are SIP-compatible and do
+        // not depend on the accessibility tree exposed by a particular Dock version.
+        if !forceMissionControl, try await focusUsingSystemShortcut(target, screen: screen) { return }
         let openedByUs = missionControl() == nil
         if openedByUs {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            process.arguments = ["/System/Applications/Mission Control.app"]
-            try process.run()
+            guard YBToggleMissionControl() == 0 else { throw AppFailure("当前系统无法打开 Mission Control。") }
         }
         var completed = false
         defer {
@@ -81,7 +87,47 @@ import YabaibyeCore
             }
             throw AppFailure("Space 切换超时；未确认切换成功。")
         }
-        throw AppFailure("未找到 Mission Control 的 Space 按钮；请检查辅助功能权限。")
+        throw AppFailure("未找到 Mission Control 的 Space 按钮；请检查权限和系统版本。")
+    }
+    private func focusUsingSystemShortcut(_ target: SpaceTarget, screen: NSScreen) async throws -> Bool {
+        guard CGPreflightPostEventAccess(), missionControl() == nil else { return false }
+        let originalCursor = CGEvent(source: nil)?.location ?? .zero
+        CGWarpMouseCursorPosition(CGPoint(x: screen.axVisibleFrame.midX, y: screen.axVisibleFrame.midY))
+        defer { CGWarpMouseCursorPosition(originalCursor) }
+        for _ in 0..<target.display.spaces.count {
+            let before = try snapshot()
+            guard let display = before.first(where: { $0.uuid == target.display.uuid }),
+                  let current = display.spaces.firstIndex(where: { $0.id == display.current }),
+                  let destination = display.spaces.firstIndex(where: { $0.id == target.desktop.id }) else { return false }
+            if current == destination { return true }
+            let direction = current < destination ? 1 : -1
+            let setting = direction > 0 ? "81" : "79"
+            let preferences = UserDefaults.standard.persistentDomain(forName: "com.apple.symbolichotkeys")?["AppleSymbolicHotKeys"] as? [String: [String: Any]]
+            let binding = preferences?[setting]
+            if binding?["enabled"] as? Bool == false { return false }
+            let value = binding?["value"] as? [String: Any]
+            let parameters = value?["parameters"] as? [NSNumber]
+            let code = parameters.flatMap { $0.count >= 3 ? CGKeyCode($0[1].uint16Value) : nil } ?? (direction > 0 ? 124 : 123)
+            let flags = parameters.flatMap { $0.count >= 3 ? CGEventFlags(rawValue: $0[2].uint64Value) : nil } ?? .maskControl
+            for down in [true, false] {
+                let event = CGEvent(keyboardEventSource: CGEventSource(stateID: .hidSystemState), virtualKey: code, keyDown: down)
+                event?.flags = [123, 124, 125, 126].contains(code) ? flags.union(.maskSecondaryFn) : flags; event?.post(tap: .cghidEventTap)
+            }
+            let expected = display.spaces[current + direction].id
+            var advanced = false
+            for _ in 0..<30 {
+                try await wait()
+                let after = try snapshot()
+                if after.first(where: { $0.uuid == display.uuid })?.current == expected { advanced = true; break }
+                if after.contains(where: { item in before.contains(where: { $0.uuid == item.uuid && $0.uuid != display.uuid && $0.current != item.current }) }) {
+                    throw AppFailure("系统把桌面切换应用到了其他屏幕；请将焦点放到目标屏幕后重试。")
+                }
+            }
+            guard advanced else { return false }
+            // Allow the native transition to finish before sending another step.
+            try await wait(0.3)
+        }
+        return isCurrent(target)
     }
     func move(_ window: ManagedWindow, to target: SpaceTarget) async throws {
         let original = memberships(window.id)
@@ -90,10 +136,10 @@ import YabaibyeCore
             throw AppFailure("只能移动普通桌面上的单个标准窗口；不支持全屏或所有桌面共有窗口。")
         }
         if original.contains(target.desktop.id) { return }
-        // Same-display moves can work without any animation on supported OS versions.
-        if YBHasWindowMoveAPI(), screen(for: target.display)?.displayID == Windows.screen(for: window.frame)?.displayID {
+        // The modern WindowManager bridge also supports moves across displays.
+        if YBHasWindowMoveAPI(), YBHasBridgedWindowMoveAPI() || screen(for: target.display)?.displayID == Windows.screen(for: window.frame)?.displayID {
             let result = YBMoveWindow(window.id, target.desktop.id)
-            for _ in 0..<5 {
+            for _ in 0..<35 {
                 try await wait()
                 if memberships(window.id) == [target.desktop.id] { return }
             }
@@ -101,44 +147,11 @@ import YabaibyeCore
                 throw AppFailure("移窗返回 \(result)，窗口所在 Space 已变化；请检查后重试。")
             }
         }
-        // On newer systems, emulate a titlebar drag across Mission Control.
-        guard let destination = screen(for: target.display), missionControl() == nil,
-              let frame = AX.frame(window.element),
-              let current = Windows.focused(), current.identity == window.identity,
-              !CGEventSource.buttonState(.combinedSessionState, button: .left) else {
-            throw AppFailure("无法安全开始拖拽；请关闭 Mission Control、松开鼠标并聚焦目标窗口。")
-        }
-        let cursor = CGEvent(source: nil)?.location ?? .zero
-        let start = CGPoint(x: frame.midX, y: frame.minY + 6)
-        let end = CGPoint(x: destination.axVisibleFrame.midX, y: destination.axVisibleFrame.minY + 24)
-        guard CGPreflightPostEventAccess() else { throw AppFailure("需要辅助功能权限才能拖拽窗口。") }
-        var releasePoint = start
-        Self.mouse(.leftMouseDown, at: start)
-        defer {
-            Self.mouse(.leftMouseUp, at: releasePoint)
-            CGWarpMouseCursorPosition(cursor)
-        }
-        try await wait(0.12)
-        try await focus(target)
-        for fraction in [0.25, 0.5, 0.75, 1.0] {
-            releasePoint = CGPoint(x: start.x + (end.x - start.x) * fraction, y: start.y + (end.y - start.y) * fraction)
-            Self.mouse(.leftMouseDragged, at: releasePoint)
-            try await wait(0.06)
-        }
-        Self.mouse(.leftMouseUp, at: end)
-        for _ in 0..<25 {
-            try await wait()
-            if memberships(window.id) == [target.desktop.id] { return }
-        }
-        throw AppFailure("拖拽后未确认窗口进入目标 Space；自定义标题栏可能不支持此操作。")
-    }
-    static func mouse(_ type: CGEventType, at point: CGPoint) {
-        let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)
-        event?.flags = []; event?.post(tap: .cghidEventTap)
+        throw AppFailure("当前系统未确认移窗成功；请运行自检检查系统兼容性。")
     }
     static func key(_ code: CGKeyCode) {
         for down in [true, false] {
-            let event = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)
+            let event = CGEvent(keyboardEventSource: CGEventSource(stateID: .hidSystemState), virtualKey: code, keyDown: down)
             event?.flags = []; event?.post(tap: .cghidEventTap)
         }
     }

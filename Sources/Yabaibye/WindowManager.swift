@@ -8,6 +8,9 @@ import YabaibyeCore
     private let logger = Logger(subsystem: "com.kenxcomp.yabaibye", category: "manager")
     private var timer: Timer?
     private var task: Task<Void, Never>?
+    private var layoutTask: Task<Void, Never>?
+    private var isLayingOut = false
+    private var pendingCommand: Command?
     private var orders: [UInt64: [String]] = [:]
     private var floating: [String: CGRect] = [:]
     private var originalFrames: [String: CGRect] = [:]
@@ -17,7 +20,14 @@ import YabaibyeCore
     private(set) var status = "已暂停"
     var changed: (() -> Void)?
 
-    init() { hotkeys.onCommand = { [weak self] command in self?.execute(command) } }
+    private let visibleWindows: @MainActor () -> [ManagedWindow]
+    private let focusedWindow: @MainActor () -> ManagedWindow?
+    var isIdle: Bool { !busy && !isLayingOut }
+    init(visibleWindows: @escaping @MainActor () -> [ManagedWindow] = { Windows.visible() },
+         focusedWindow: @escaping @MainActor () -> ManagedWindow? = { Windows.focused() }) {
+        self.visibleWindows = visibleWindows; self.focusedWindow = focusedWindow
+        hotkeys.onCommand = { [weak self] command in self?.execute(command) }
+    }
     func start() throws {
         guard !enabled else { return }
         guard AXIsProcessTrusted() else { throw AppFailure("请先在系统设置 → 隐私与安全性 → 辅助功能中允许 Yabaibye。") }
@@ -36,6 +46,7 @@ import YabaibyeCore
     }
     func stop() {
         task?.cancel(); task = nil
+        layoutTask?.cancel(); pendingCommand = nil
         timer?.invalidate(); timer = nil
         hotkeys.stop(); enabled = false
         UserDefaults.standard.set(false, forKey: "managerEnabled")
@@ -56,6 +67,7 @@ import YabaibyeCore
     }
     func execute(_ command: Command) {
         guard enabled, !busy else { return }
+        if isLayingOut { pendingCommand = command; return }
         guard AXIsProcessTrusted() else { stop(); report("辅助功能权限已撤销；管理已暂停。", error: true); return }
         busy = true
         task = Task { @MainActor [weak self] in
@@ -67,7 +79,7 @@ import YabaibyeCore
                 case .focusSpace(let number), .moveToSpace(let number):
                     guard let target = SpaceRouter.numbered(number, displays: displays) else { throw AppFailure("Space \(number) 不存在；请先在 Mission Control 创建桌面。") }
                     if case .moveToSpace = command {
-                        guard let window = Windows.focused() else { throw AppFailure("前台没有可移动的标准窗口。") }
+                        guard let window = self.focusedWindow() else { throw AppFailure("前台没有可移动的标准窗口。") }
                         try await self.spaces.move(window, to: target)
                         self.report("窗口已移到 Space \(number)")
                     } else {
@@ -79,7 +91,7 @@ import YabaibyeCore
                     if secondary {
                         guard displays.count > 1 else { throw AppFailure("未检测到第二个显示器。") }
                         display = displays[1]
-                    } else if let screen = Windows.focused().flatMap({ Windows.screen(for: $0.frame) }) ?? NSScreen.main {
+                    } else if let screen = self.focusedWindow().flatMap({ Windows.screen(for: $0.frame) }) ?? NSScreen.main {
                         display = self.spaces.display(for: screen, in: displays)
                     } else { display = nil }
                     guard let display else { throw AppFailure("无法确定当前显示器。") }
@@ -87,28 +99,29 @@ import YabaibyeCore
                     try await self.spaces.focus(target)
                     self.report("已切换\(secondary ? "第二屏" : "当前屏幕") Space")
                 case .toggleFloat:
-                    guard let window = Windows.focused() else { throw AppFailure("前台没有可平铺的标准窗口。") }
+                    guard let window = self.focusedWindow() else { throw AppFailure("前台没有可平铺的标准窗口。") }
                     if let saved = self.floating.removeValue(forKey: window.identity) {
                         self.originalFrames[window.identity] = saved
                         self.report("窗口已加入平铺")
                     } else {
                         let frame = self.originalFrames[window.identity] ?? window.frame
-                        guard AX.setFrame(window.element, frame) else { throw AppFailure("窗口拒绝恢复浮动尺寸。") }
+                        guard try await AX.applyFrames([(window.element, frame)]) else { throw AppFailure("窗口拒绝恢复浮动尺寸。") }
                         self.floating[window.identity] = frame
                         self.report("窗口已浮动")
                     }
                 case .swap(let direction): try self.swap(direction)
                 }
-            } catch is CancellationError { /* stop/quit cancels transitions and releases a held mouse */ }
+            } catch is CancellationError { /* stop/quit cancels transitions */ }
             catch { self.report(error.localizedDescription, error: true) }
         }
     }
     func refresh(force: Bool = false) {
-        guard enabled, !busy else { return }
+        guard enabled, !busy, !isLayingOut else { return }
         guard AXIsProcessTrusted() else { stop(); report("辅助功能权限已撤销。", error: true); return }
         guard !CGEventSource.buttonState(.combinedSessionState, button: .left), spaces.missionControl() == nil,
               let displays = try? spaces.snapshot() else { return }
-        let windows = Windows.visible()
+        let windows = visibleWindows()
+        var requests: [(AXUIElement, CGRect)] = []
         for display in displays {
             guard display.spaces.first(where: { $0.id == display.current })?.type == 0,
                   let screen = spaces.screen(for: display) else { continue }
@@ -122,18 +135,30 @@ import YabaibyeCore
             let signature = order.joined(separator: ",") + "@\(screen.axVisibleFrame)"
             guard force || signatures[display.current] != signature else { continue }
             let frames = Layout.frames(count: order.count, in: screen.axVisibleFrame)
-            var failed = false
             for (index, id) in order.enumerated() {
                 guard let window = members.first(where: { $0.identity == id }) else { continue }
                 if originalFrames[id] == nil { originalFrames[id] = window.frame }
-                if !AX.setFrame(window.element, frames[index]) { failed = true }
+                requests.append((window.element, frames[index]))
             }
             signatures[display.current] = signature
-            if failed { report("部分窗口拒绝调整尺寸；可用 ⌥T 将其浮动。", error: true) }
+
+        }
+        guard !requests.isEmpty else { return }
+        isLayingOut = true
+        layoutTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.isLayingOut = false
+                if let command = self.pendingCommand { self.pendingCommand = nil; self.execute(command) }
+            }
+            do {
+                if try await !AX.applyFrames(requests) { self.report("部分窗口有尺寸限制或拒绝调整；可用 ⌥T 将其浮动。", error: true) }
+            } catch is CancellationError { }
+            catch { self.report(error.localizedDescription, error: true) }
         }
     }
     private func swap(_ direction: Direction) throws {
-        guard let window = Windows.focused(), floating[window.identity] == nil,
+        guard let window = self.focusedWindow(), floating[window.identity] == nil,
               let space = spaces.memberships(window.id).first,
               var order = orders[space], let index = order.firstIndex(of: window.identity),
               let screen = Windows.screen(for: window.frame) else { throw AppFailure("前台窗口不在平铺布局中。") }

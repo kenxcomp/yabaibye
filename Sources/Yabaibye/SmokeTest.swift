@@ -7,13 +7,19 @@ import YabaibyeCore
     private var windows: [NSWindow] = []
     private var results: [String] = []
     private let spaces = Spaces()
+    private var task: Task<Void, Never>?
+    func cancel() { task?.cancel() }
     func run(completion: @escaping (String) -> Void) {
         guard AXIsProcessTrusted() else { completion("未执行：请先授予 Yabaibye 辅助功能权限。"); return }
         guard WindowManager.conflicts().isEmpty else { completion("未执行：请先停止 yabai/skhd。"); return }
-        Task { @MainActor in
+        task = Task { @MainActor in
             let original = (try? spaces.snapshot()) ?? []
+            results.append("事件投递权限：\(CGPreflightPostEventAccess())")
             let previousApp = NSWorkspace.shared.frontmostApplication
             do {
+                let hotkeys = Hotkeys()
+                try hotkeys.start(); hotkeys.stop()
+                results.append("PASS：27 个全局快捷键注册 / 释放")
                 guard let screen = NSScreen.screens.first else { throw AppFailure("没有显示器") }
                 for i in 0..<2 {
                     let window = NSWindow(contentRect: NSRect(x: screen.frame.minX + 140 + CGFloat(i) * 80, y: screen.frame.minY + 180, width: 480, height: 340),
@@ -30,11 +36,42 @@ import YabaibyeCore
                 guard managed.count == 2 else { throw AppFailure("无法读取自检窗口 AX 标识") }
                 let frames = Layout.frames(count: 2, in: screen.axVisibleFrame)
                 for (i, window) in managed.enumerated() {
-                    guard AX.setFrame(window.element, frames[i]), let actual = AX.frame(window.element), abs(actual.width - frames[i].width) < 3, abs(actual.minX - frames[i].minX) < 3 else {
-                        throw AppFailure("AX 平铺尺寸校验失败")
+                    let accepted = try await AX.applyFrames([(window.element, frames[i])])
+                    try await Task.sleep(nanoseconds: 200_000_000)
+                    let actual = AX.frame(window.element)
+                    guard accepted, let actual, abs(actual.width - frames[i].width) < 3, abs(actual.minX - frames[i].minX) < 3 else {
+                        throw AppFailure("AX 平铺尺寸校验失败：accepted=\(accepted)，目标=\(frames[i])，实际=\(String(describing: actual))")
                     }
                 }
                 results.append("PASS：真实 AX 窗口移动和缩放")
+                // Run production command handling against only the owned fixtures.
+                let fixtureManager = WindowManager(visibleWindows: {
+                    managed.compactMap { Windows.make($0.element, pid: $0.pid) }
+                }, focusedWindow: { Windows.make(managed[0].element, pid: managed[0].pid) })
+                do {
+                    defer { fixtureManager.stop() }
+                    try fixtureManager.start()
+                    try await waitForIdle(fixtureManager)
+                    fixtureManager.execute(.toggleFloat)
+                    try await waitForIdle(fixtureManager)
+                    guard fixtureManager.status == "窗口已浮动" else { throw AppFailure("浮动命令未完成") }
+                    fixtureManager.execute(.toggleFloat)
+                    try await waitForIdle(fixtureManager)
+                    guard fixtureManager.status == "窗口已加入平铺",
+                          let first = AX.frame(managed[0].element), let second = AX.frame(managed[1].element) else {
+                        throw AppFailure("重新加入平铺失败")
+                    }
+                    let direction: Direction = abs(first.midX - second.midX) > abs(first.midY - second.midY)
+                        ? (first.midX < second.midX ? .right : .left) : (first.midY < second.midY ? .down : .up)
+                    fixtureManager.execute(.swap(direction))
+                    try await waitForIdle(fixtureManager)
+                    guard let afterFirst = AX.frame(managed[0].element), let afterSecond = AX.frame(managed[1].element),
+                          abs(afterFirst.minX - second.minX) < 3, abs(afterFirst.minY - second.minY) < 3,
+                          abs(afterSecond.minX - first.minX) < 3, abs(afterSecond.minY - first.minY) < 3 else {
+                        throw AppFailure("方向交换后的实际窗口位置不匹配")
+                    }
+                    results.append("PASS：平铺 / 浮动切换与方向交换命令")
+                }
                 for display in original {
                     guard let target = SpaceRouter.adjacent(1, display: display) ?? SpaceRouter.adjacent(-1, display: display) else {
                         results.append("SKIP：屏幕只有一个 Space"); continue
@@ -54,16 +91,34 @@ import YabaibyeCore
                 }
                 let target = SpaceTargetForTest.make(sourceDisplay, index)
                 try await spaces.move(focused, to: target)
-                results.append("PASS：原生 Space 移窗（已核对窗口归属）")
+                results.append("PASS：同屏原生 Space 移窗（已核对窗口归属）")
+                if let otherDisplay = try spaces.snapshot().first(where: { $0.uuid != sourceDisplay.uuid }),
+                   let otherIndex = otherDisplay.spaces.firstIndex(where: { $0.type == 0 }) {
+                    try await spaces.move(focused, to: SpaceTargetForTest.make(otherDisplay, otherIndex))
+                    results.append("PASS：跨屏原生 Space 移窗（已核对窗口归属）")
+                } else { results.append("SKIP：没有第二块可用显示器") }
+                guard let returnDisplay = try spaces.snapshot().first(where: { $0.uuid == sourceDisplay.uuid }),
+                      let returnIndex = returnDisplay.spaces.firstIndex(where: { $0.id == sourceID }) else {
+                    throw AppFailure("原桌面已不存在")
+                }
+                try await spaces.move(focused, to: SpaceTargetForTest.make(returnDisplay, returnIndex))
+                results.append("PASS：测试窗口移回原 Space")
             } catch { results.append("FAIL：\(error.localizedDescription)") }
             windows.forEach { $0.close() }; windows.removeAll()
-            for display in original {
+            for display in original where !Task.isCancelled {
                 do { try await restore(display) } catch { results.append("恢复桌面失败：\(error.localizedDescription)") }
             }
             previousApp?.activate(options: [])
             results.append("SIP 完整开启后的兼容性：需重启开启 SIP 后再自检")
-            completion(results.joined(separator: "\n"))
+            if !Task.isCancelled { completion(results.joined(separator: "\n")) }
         }
+    }
+    private func waitForIdle(_ manager: WindowManager) async throws {
+        for _ in 0..<100 {
+            try await Task.sleep(nanoseconds: 80_000_000)
+            if manager.isIdle { return }
+        }
+        throw AppFailure("窗口管理命令执行超时")
     }
     private func restore(_ display: DisplaySpaces) async throws {
         guard let fresh = try spaces.snapshot().first(where: { $0.uuid == display.uuid }),

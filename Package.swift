@@ -7,7 +7,7 @@ let package = Package(
     products: [.executable(name: "Yabaibye", targets: ["Yabaibye"])],
     targets: [
         .target(name: "YabaibyeCore"),
-        .target(name: "SpaceBridge", linkerSettings: [.linkedFramework("AppKit")]),
+        .target(name: "SpaceBridge", cSettings: [.unsafeFlags(["-fobjc-arc"])], linkerSettings: [.linkedFramework("AppKit")]),
         .executableTarget(name: "Yabaibye", dependencies: ["YabaibyeCore", "SpaceBridge"],
                           linkerSettings: [.linkedFramework("Carbon")]),
         .testTarget(name: "YabaibyeCoreTests", dependencies: ["YabaibyeCore"])

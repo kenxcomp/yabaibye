@@ -2,7 +2,7 @@
 
 原生 macOS 菜单栏窗口管理器，以保持 **SIP 开启**为设计目标。Swift + AppKit，内置快捷键，不依赖 yabai、skhd、Hammerspoon，也不向 Dock 注入代码。
 
-**0.1.0 开发预览**：原生 Space 操作使用未公开的只读 SkyLight 接口、Mission Control 辅助功能和移窗兼容接口/拖拽回退。它们不是 Apple 保证稳定的 API。请运行菜单里的自检；完整 SIP 环境的结果必须独立验证，不能用编译成功替代。
+**0.1.0 开发预览**：原生 Space 操作使用未公开的 SkyLight 查询、WindowManager 移窗桥接接口和 Mission Control 辅助功能。它们不是 Apple 保证稳定的 API。请运行菜单里的自检；完整 SIP 环境的结果必须独立验证，不能用编译成功替代。
 
 ## 快捷键
 
@@ -39,7 +39,7 @@ swift test
 4. 点击菜单栏 `YB Ⅱ` → **启用窗口管理**。
 5. 菜单栏可暂停、重新平铺、查看 Space 列表、复制不含窗口标题的诊断、开关登录时启动，以及运行自检。
 
-本机构建默认使用临时签名，修改代码重签名后系统可能要求重新授权辅助功能。使用自己的稳定签名身份可设置 `YABAIBYE_SIGN_IDENTITY`。尚未进行 Developer ID 公证；不提供绕过 Gatekeeper 的安装步骤。
+本机构建默认使用临时签名，修改代码重签名后系统可能要求重新授权辅助功能。使用自己的稳定签名身份可设置 `YABAIBYE_SIGN_IDENTITY`，或在被 Git 忽略的 `.signing-identity` 文件中写入签名身份。尚未进行 Developer ID 公证；不提供绕过 Gatekeeper 的安装步骤。
 
 其他开发入口：
 
@@ -55,9 +55,8 @@ swift test
 
 ## 原生 Space 的边界
 
-- 切换会短暂打开 Mission Control，通过目标显示器对应的 AX Space 按钮执行操作，最后重新读取当前 Space 确认结果。
-- 同屏移窗先尝试运行时解析的兼容接口，并查询窗口归属验证。失败后模拟标题栏拖拽，切换并跟随到目标 Space。跨屏移窗直接使用拖拽路径。
-- 拖拽期间不要操作鼠标；取消/失败会释放鼠标按键并恢复指针位置。特殊自绘标题栏、不可调整大小的窗口可能不支持。
+- 优先使用系统“向左/右移动一个空间”的快捷键，读取你的键位配置，按目标屏幕逐步切换并核对 Space ID；原生按钮路径作为回退。键盘 → 键盘快捷键 → Mission Control 中需启用左右切换。若采用按钮回退，会短暂显示 Mission Control。
+- 移窗优先使用运行时解析的 `SLSBridgedMoveWindowsToManagedSpaceOperation`，支持同屏及跨屏；保持当前桌面，查询窗口归属后才报告成功。旧系统仅尝试同屏兼容接口，无法验证时明确报错。不会模拟拖拽。
 - 全屏、最小化、对话框和“所有桌面”共有窗口不参与平铺/移窗。
 - 系统或应用最小尺寸可能使实际窗口偏离理想平铺格；使用 `⌥T` 将此类窗口浮动。
 - 私有接口缺失或 Mission Control AX 结构变化会明确报错，不伪报成功，不要求关闭 SIP。
@@ -67,12 +66,12 @@ swift test
 
 `swift test` 检查跨屏编号、全屏过滤与 AX 索引对应、导航边界、27 个快捷键不冲突、布局不越界不重叠，以及方向邻居选择。
 
-应用菜单 → **运行窗口与 Space 自检**：先暂停管理，仅创建测试窗口，验证真实 AX 移动/缩放、各屏原生 Space 切换、移窗后的真实归属；关闭测试窗口后恢复原来的活动 Space。**自检不自动重新启用管理**，结果里 `SKIP`/`FAIL` 不算通过。
+应用菜单 → **运行窗口与 Space 自检**：先暂停管理，仅创建测试窗口，验证真实 AX 移动/缩放、生产命令的浮动与方向交换、各屏原生 Space 切换、同屏及跨屏移窗后的真实归属；关闭测试窗口后恢复原来的活动 Space。**自检不自动重新启用管理**，结果里 `SKIP`/`FAIL` 不算通过。
 
 更多： [验收清单](docs/ACCEPTANCE.md) · [启用 SIP](docs/ENABLE-SIP.md) · [架构](docs/ARCHITECTURE.md)。
 
 ## 致谢
 
-原生 Space 能力的兼容性研究参考了 [Hammerspoon 的 hs.spaces 文档](https://www.hammerspoon.org/docs/hs.spaces.html)、[SkyLight 声明与兼容方法](https://github.com/Hammerspoon/hammerspoon/tree/master/extensions/spaces) 以及 [PaperWM 的拖拽回退思路](https://github.com/Hammerspoon/Spoons/tree/master/Source/PaperWM.spoon)。Yabaibye 是独立应用，没有捆绑这些项目。
+原生 Space 能力的兼容性研究参考了 [Hammerspoon 的 hs.spaces 文档](https://www.hammerspoon.org/docs/hs.spaces.html)、[SkyLight 声明与兼容方法](https://github.com/Hammerspoon/hammerspoon/tree/master/extensions/spaces)、[yabai 的 Space 实现](https://github.com/asmvik/yabai/blob/master/src/space_manager.c) 和 [DockDoor 的桥接 API 研究](https://github.com/ejbills/DockDoor/blob/main/DockDoor/Utilities/PrivateApis.swift)。Yabaibye 是独立应用，没有捆绑这些项目。
 
 MIT License.

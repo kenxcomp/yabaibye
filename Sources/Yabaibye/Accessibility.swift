@@ -27,14 +27,56 @@ enum AX {
               AXValueGetValue(size as! AXValue, .cgSize, &dimensions) else { return nil }
         return CGRect(origin: point, size: dimensions)
     }
-    @discardableResult static func setFrame(_ element: AXUIElement, _ frame: CGRect) -> Bool {
-        var point = frame.origin, size = frame.size
-        guard let positionValue = AXValueCreate(.cgPoint, &point), let sizeValue = AXValueCreate(.cgSize, &size) else { return false }
-        // Resize before and after moving to handle cross-display size constraints.
-        AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue)
-        let moved = AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, positionValue)
-        let resized = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue)
-        return moved == .success && resized == .success
+    @MainActor static func applyFrames(_ requests: [(AXUIElement, CGRect)]) async throws -> Bool {
+        var accepted = true
+        var enhancedApps: [AXUIElement] = []
+        var seenPIDs = Set<pid_t>()
+        for (element, _) in requests {
+            var pid: pid_t = 0
+            guard AXUIElementGetPid(element, &pid) == .success, seenPIDs.insert(pid).inserted else { continue }
+            let app = AXUIElementCreateApplication(pid)
+            if value(app, "AXEnhancedUserInterface") as? Bool == true,
+               AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanFalse) == .success {
+                enhancedApps.append(app)
+            }
+        }
+        defer { enhancedApps.forEach { AXUIElementSetAttributeValue($0, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue) } }
+        // AX setters can return before the app applies a frame. Separate phases so
+        // an asynchronous size update cannot overwrite a queued position change.
+        for (element, frame) in requests {
+            var size = frame.size
+            guard let value = AXValueCreate(.cgSize, &size) else { accepted = false; continue }
+            if AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, value) != .success { accepted = false }
+        }
+        try await settle(requests.map { $0.0 })
+        for (element, frame) in requests {
+            var point = frame.origin
+            guard let value = AXValueCreate(.cgPoint, &point) else { accepted = false; continue }
+            if AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value) != .success { accepted = false }
+        }
+        try await settle(requests.map { $0.0 })
+        for (element, frame) in requests {
+            var size = frame.size
+            guard let value = AXValueCreate(.cgSize, &size) else { accepted = false; continue }
+            if AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, value) != .success { accepted = false }
+        }
+        try await settle(requests.map { $0.0 })
+        return accepted && requests.allSatisfy { element, desired in
+            guard let actual = frame(element) else { return false }
+            return abs(actual.minX - desired.minX) < 3 && abs(actual.minY - desired.minY) < 3
+                && abs(actual.width - desired.width) < 3 && abs(actual.height - desired.height) < 3
+        }
+    }
+    @MainActor private static func settle(_ elements: [AXUIElement]) async throws {
+        var previous = elements.map { frame($0) }
+        var unchanged = 0
+        for _ in 0..<25 {
+            try await Task.sleep(nanoseconds: 60_000_000)
+            let current = elements.map { frame($0) }
+            unchanged = current == previous ? unchanged + 1 : 0
+            if unchanged >= 2 { return }
+            previous = current
+        }
     }
     static func descendant(_ root: AXUIElement, depth: Int = 6, matching predicate: (AXUIElement) -> Bool) -> AXUIElement? {
         if predicate(root) { return root }
