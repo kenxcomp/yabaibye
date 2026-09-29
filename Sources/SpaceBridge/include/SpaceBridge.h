@@ -11,4 +11,5 @@ BOOL YBHasBridgedWindowMoveAPI(void);
 BOOL YBHasWindowMoveAPI(void);
 int YBMoveWindow(uint32_t window, uint64_t space);
 uint32_t YBWindowID(AXUIElementRef element);
+BOOL YBReadWindowSublevel(uint32_t window, int32_t *result);
 NS_ASSUME_NONNULL_END

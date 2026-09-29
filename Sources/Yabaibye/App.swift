@@ -16,6 +16,15 @@ import YabaibyeCore
     private let foregroundKeeper = ForegroundKeeper()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let index = CommandLine.arguments.firstIndex(of: "--diagnose-window-levels") {
+            for argument in CommandLine.arguments.dropFirst(index + 1) {
+                guard let id = UInt32(argument) else { continue }
+                var sublevel: Int32 = 0
+                let known = YBReadWindowSublevel(id, &sublevel)
+                print("window=\(id) sublevel=\(known ? String(sublevel) : "unknown")")
+            }
+            NSApp.terminate(nil); return
+        }
         // Raw CLI diagnostics are read-only and never register keys or change layouts.
         if CommandLine.arguments.contains("--diagnose") {
             print(Self.diagnostics())

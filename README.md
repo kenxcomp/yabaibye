@@ -24,7 +24,7 @@ Looking for a **yabai alternative** with built-in hotkeys? Yabaibye combines a m
 | **Adjustable padding and gaps** | Set screen-edge padding and window spacing independently from 0–100 pt. |
 | **Window zoom and floating** | Fill the current desktop's usable area and restore it, or toggle an individual window between tiled and floating. |
 | **Layout persistence** | Keep tiled/floating membership and restore custom partitions for still-open windows across restarts within the same login session. |
-| **Foreground-window protection** | Attempt to raise the active window above overlapping ordinary background windows without changing application focus. |
+| **Foreground-window protection** | Attempt to raise the active window above overlapping ordinary background windows, with up to four attempts and increasing delays per obstruction episode. Recheck both app and window focus before each attempt without changing app focus or window levels. |
 
 ## Drag to split or swap
 
@@ -147,3 +147,9 @@ The menu offers **布局自检（不切换桌面）** (layout checks without cha
 Compatibility research references [Hammerspoon's Spaces documentation](https://www.hammerspoon.org/docs/hs.spaces.html), [SkyLight declarations](https://github.com/Hammerspoon/hammerspoon/tree/master/extensions/spaces), [yabai's Space implementation](https://github.com/asmvik/yabai/blob/master/src/space_manager.c), and [DockDoor's bridge research](https://github.com/ejbills/DockDoor/blob/main/DockDoor/Utilities/PrivateApis.swift). Yabaibye is independently implemented and does not bundle these projects.
 
 [MIT License](LICENSE) · Copyright © 2026 kenxcomp
+
+### Migrating existing windows from yabai
+
+Stopping or removing yabai does not necessarily restore the WindowServer **sublevel** it assigned to already-open windows. On the verified macOS 27.2 setup, an old tiled Claude window retained sublevel `-20` while ordinary new windows used `0`; activating or raising it could not overcome that difference. Save work and finish running tasks, then normally quit and reopen the affected app to recreate its windows. Yabaibye does not override system levels or reinstall yabai's scripting addition.
+
+For read-only troubleshooting with known window IDs, run `dist/Yabaibye.app/Contents/MacOS/Yabaibye --diagnose-window-levels <window-id> ...`. This reports only numeric IDs and sublevels, never titles or contents. The private getter is best effort; an unavailable window or symbol reports `unknown`, and compatibility beyond the verified system is not guaranteed.

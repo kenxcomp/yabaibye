@@ -22,7 +22,7 @@
 
 - `LayoutSpacing`：两个独立的 0–100 pt 偏好，UserDefaults 保存并校验；布局签名包含留白，因此忙碌时延迟的修改会在下次刷新应用。
 - `SpacingSettings`：原生滑块/数值输入与缩放预览；不另存一份布局状态。
-- `ForegroundPolicy` / `ForegroundKeeper`：按前后顺序与几何重叠判断普通后台窗口遮挡；只 Raise 当前前台焦点窗口，重新检查前台 PID 后执行，不激活应用或更改窗口等级。系统浮层及当前应用自己的窗口优先保留。
+- `ForegroundPolicy` / `ForegroundKeeper`：按前后顺序与几何重叠判断普通后台窗口遮挡；只 Raise 当前前台焦点窗口，重新检查前台 PID 与焦点窗口 ID 后执行。AX Raise 返回成功也必须等待后续层级快照确认无遮挡，同一遮挡最多退避尝试 4 次；焦点、几何或遮挡变化后重新判断，失败结果记录到 foreground 日志。不切换应用焦点或更改窗口等级。`ForegroundModalGuard` 读取焦点窗口的 AXModal 与直属 AXSheet；通信失败时跳过本轮。窗口属于同一 PID 不能证明是模态窗口，因此普通同应用窗口不再屏蔽后台遮挡判定。系统高层浮窗不被跨层抬高覆盖。
 
 - `ShortcutPreferences` / `ShortcutSettings`：28 项操作的可持久化物理键位与修饰键；先验证完整命令表及去重，再注册新组合，失败回滚旧注册。帮助页及放大菜单从当前配置生成。
 - `LayoutPersistence`：在同一 archive 保存 Codable 分区树、customized 标记及可选 tilingPolicy；旧档案缺策略时仍读取布局，并在启用时建立成员基线。分区树以显示器 UUID + Space ID 分区，boot UUID / loginwindow PID / UID 限定会话；只存窗口 PID/ID，不存窗口标题。刷新成员变化、拖拽、方向交换后保存。恢复后重算当前屏幕几何；reconcile 对 customized=false 的自动树按当前默认规则重建，即使成员未变，customized=true 的手动树保留分区结构。练习不持久化，自检注入独立 UserDefaults suite，不覆盖用户布局。
@@ -35,3 +35,5 @@
 - 放大窗口最小化、应用隐藏或进入原生全屏时，释放该 Space 的放大状态，让剩余窗口继续平铺。
 - 练习和自检管理器限制窗口身份集合及焦点来源，不注册全局快捷键、不改用户启用偏好；自检单独短暂验证快捷键注册后立即释放。
 - 只有通过单实例检查的主实例拥有退出清理和偏好保存责任；被拒绝的重复实例直接退出。
+
+- `--diagnose-window-levels` / `WindowDiagnostics.m`：显式调用的只读迁移诊断，独立于前台恢复轮询；通过运行时解析的 `SLSGetWindowSubLevel` 查询已知窗口 ID，不读取窗口内容、不使用层级 setter。普通 CG layer 无法反映旧 yabai 遗留的 below 子层级；AX Raise 也不能跨子层级恢复。这种旧窗口状态通过保存工作后重开所属应用处理，不加入永久跨进程层级覆盖。私有 getter 仅在 macOS 27.2 实测，缺失或窗口失效时返回 unknown。

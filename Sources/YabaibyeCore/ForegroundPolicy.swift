@@ -11,12 +11,11 @@ public struct WindowStackEntry {
     }
 }
 public enum ForegroundPolicy {
-    /// The input is front-to-back. Do not reorder active-app sheets or elevated panels.
+    /// The input is front-to-back. Modal/sheet safety is checked by the AX adapter.
     public static func obstruction(focusedID: UInt32, activePID: Int32, stack: [WindowStackEntry]) -> UInt32? {
         guard let index = stack.firstIndex(where: { $0.id == focusedID && $0.owner == activePID }), stack[index].layer == 0 else { return nil }
         let focused = stack[index]
         let above = stack[..<index].filter { $0.frame.intersects(focused.frame) }
-        guard !above.contains(where: { $0.owner == activePID }) else { return nil }
         return above.first(where: { $0.layer == 0 && $0.owner != activePID })?.id
     }
 }
