@@ -2,6 +2,34 @@
 
 版本唯一来源为仓库根目录 `version.json`。开发命令 `./script/build_and_run.sh` 使用当前版本生成 Debug 包，不升版；正式包与应用诊断均读取同一版本来源。
 
+## 本机一键公证发布（推荐）
+
+签名私钥和公证凭证保存在本机钥匙串，不上传 GitHub Secrets。先将已验证的配置名称写入仓库根目录 `.release-local.json`（已被 Git 忽略，不填写密码或私钥）：
+
+```json
+{
+  "identity": "Developer ID Application: Your Name (TEAMID)",
+  "notary_profile": "your-keychain-profile"
+}
+```
+
+也可使用 `YABAIBYE_RELEASE_IDENTITY` 和 `YABAIBYE_NOTARY_PROFILE` 环境变量覆盖。运行此入口需 Python 3.11+，GitHub CLI 需已登录，并且 `main` 的工作区干净、已与 `origin/main` 同步；先完成并推送产品代码，再运行发布。
+
+```sh
+# 只检查配置和发布条件，不打包、不升版、不上传
+python3 script/publish_release.py --check
+
+# 测试、自动升版、通用架构打包、正式签名、公证、推送版本与上传 Release
+python3 script/publish_release.py
+
+# 上传或网络中断后继续同一次发布，不重复递增版本
+python3 script/publish_release.py --resume
+```
+
+默认递增补丁版本和构建号，也支持 `--bump minor` / `major` / `build`。正式发布要求 Developer ID 签名与 Apple 公证成功，不会降级为未公证包；只自动提交 `version.json`。发布过程使用 GitHub 草稿暂存附件，确认后再公开；恢复时校验源码、标签和产物，遇到不一致即停止。发布状态保存在被忽略的 `dist/` 内。
+
+此命令会向 Apple 提交应用与 DMG，并向 GitHub 推送版本和上传附件；不会自动替换本机应用或关闭正在使用的窗口管理器。首次访问签名私钥时，macOS 可能要求本机密码授权。证书私钥、公证密码不得进入配置、日志或仓库。
+
 ## 正式打包
 
 ```sh
@@ -16,7 +44,7 @@ python3 script/package_release.py
 
 ## 仓库下载
 
-对 main 手动运行 GitHub Actions 的 **Release** 工作流，选择版本增量，即可测试、打包、提交版本文件并创建 GitHub Release。只有这条人工触发的工作流会发布；普通 push / PR 的 CI 仍是开发验证，不自动升版。工作流当前明确发布未公证包，使用仓库 token，不需要上传本机证书。
+优先使用上面的本机公证发布命令。作为可选的未公证流程，对 main 手动运行 GitHub Actions 的 **Release** 工作流，选择版本增量，即可测试、打包、提交版本文件并创建 GitHub Release。这条工作流仅由人工触发；普通 push / PR 的 CI 仍是开发验证，不自动升版。工作流当前明确发布未公证包，使用仓库 token，不需要上传本机证书。
 
 本地打包后提交本次源码与 `version.json`，再使用 `gh release create` 发布 DMG、ZIP、SHA256SUMS、release.json。标签格式为 `v<version>+<build>`，发布必须指向该源码提交。不要把 `.app`、DMG 或 ZIP 提交进 Git 历史；使用 Releases 附件。
 

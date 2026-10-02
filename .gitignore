@@ -8,3 +8,6 @@ dist/
 
 __pycache__/
 version.json.next
+
+# Local signing identity and Keychain profile names (never commit credentials).
+.release-local.json
