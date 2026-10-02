@@ -80,6 +80,14 @@
 - `0.1.2 (3)` 使用 SwiftPM Release 优化构建；`lipo` 分别验证 arm64 / x86_64 两个架构。运行验证仅为本机 Apple Silicon，不外推 Intel 或全部 macOS 14+ 系统。
 - 60 项 Swift 测试、6 项 Python 打包回归全部通过，无编译警告；覆盖版本递增模式、无效输入、签名失败保留旧包、版本写入失败回滚及禁止覆盖同名发布。
 - DMG 内部校验通过；最终 ZIP 解压后验证签名、Hardened Runtime、无运行时保护例外、版本元数据；二进制与 `/Applications/Yabaibye.app` 完全一致。SHA256SUMS 校验通过。
-- 本机只有开发/商店分发证书，没有 Developer ID；用户明确选择先发布未公证 Release。产物及发布说明标记 ad-hoc / not notarized，不宣称通过 Gatekeeper、公证或 Intel 实机测试。
+- 该次打包时本机只有开发/商店分发证书，没有 Developer ID；用户明确选择先发布未公证 Release。产物及发布说明标记 ad-hoc / not notarized，不宣称通过 Gatekeeper、公证或 Intel 实机测试。
 - 主窗口视觉检查正常，版本和登录启动入口可见。首次安装服务返回 notFound，修正为允许重新注册并返回真实系统错误；本机点击注册后实际状态变为“登录时启动：已开启”。没有注销或重启当前工作会话。
-- 正式安装路径辅助功能授权刷新等待用户完成系统密码验证；本次没有改动此前的窗口子层级修复范围。
+- 后续完成正式安装路径的辅助功能授权刷新，GUI 确认正在管理窗口；本次没有改动此前的窗口子层级修复范围。
+
+## Developer ID 签名与公证（2026-10-02）
+
+- `0.1.3 (4)` 为 Developer ID 签名的 universal Release，60 项 Swift 测试（39 核心 + 21 应用）、6 项 Python 打包测试通过，无编译警告；无窗口管理行为变更。
+- App ZIP 公证提交 `641d2a1c-59eb-409b-aaa1-a373632fb843` 与 DMG 提交 `c8ffc2b8-190e-4f56-aeec-bd9bdd443e5a` 均返回 Accepted；App、DMG 的票据装订和验证成功。首次打包因 Apple 票据服务瞬时 TLS 故障中止，版本未推进；网络恢复后完整重试通过，没有跳过 TLS 或公证校验。
+- 最终 ZIP 解压后严格签名、版本元数据和 Gatekeeper 校验通过；最终 App 和 DMG 均识别为 Notarized Developer ID。DMG 内部校验及 SHA256SUMS 全部通过。
+- 已安装至 `/Applications/Yabaibye.app`，保留 `dist/installed-backup-0.1.2-3.app` 供回退。由 ad-hoc 切换至 Developer ID 后，仅刷新本应用旧辅助功能记录，用户完成系统密码验证；GUI 确认版本 0.1.3（构建 4）、正在管理窗口、登录时启动已开启。未注销或重启用户工作会话，未重复全套 Space GUI 自检。
+- 本机运行验证仍限 Apple Silicon；不声明全部 macOS 或 Intel 实机兼容，也未改变此前旧 yabai 窗口子层级问题的结论。GitHub Actions Release 工作流仍明确生成未公证包，本次已公证包由本机流程生成。

@@ -9,7 +9,7 @@
 
 Looking for a **yabai alternative** with built-in hotkeys? Yabaibye combines a macOS menu bar app, multi-monitor Space navigation, and customizable window layouts in Swift and AppKit. It runs independently of yabai and skhd, without Dock injection or a scripting addition.
 
-**Development preview · 0.1.0.** Native Space operations use private macOS interfaces and Mission Control accessibility. Full-SIP, dual-display behavior has been tested on **macOS 27.2 (26B5091g)**; this does not establish compatibility with every macOS version. See the [validation record](docs/VALIDATION.md) before relying on a particular feature. The app UI is currently in Chinese; English UI contributions are welcome.
+**Development preview.** Native Space operations use private macOS interfaces and Mission Control accessibility. Full-SIP, dual-display behavior has been tested on **macOS 27.2 (26B5091g)**; this does not establish compatibility with every macOS version. See the [validation record](docs/VALIDATION.md) before relying on a particular feature. The app UI is currently in Chinese; English UI contributions are welcome.
 
 [Get started](#get-started) · [Default shortcuts](#default-shortcuts) · [How tiling works](#drag-to-split-or-swap) · [FAQ](#faq) · [Report an issue](https://github.com/kenxcomp/yabaibye/issues/new/choose)
 
@@ -45,11 +45,11 @@ Drop in the **center** to swap, or at the **top, bottom, left, or right edge** t
 
 ### Download and install
 
-Download a DMG or ZIP from [GitHub Releases](https://github.com/kenxcomp/yabaibye/releases/latest). The initial release is an optimized **universal Release build** for Apple Silicon and Intel, **ad-hoc signed and not Apple notarized**. macOS or your organization's policy may block it; do not disable system security protections. Intel and the minimum macOS target are not individually certified by our local Apple Silicon validation.
+Download the [notarized 0.1.3 (4) DMG or ZIP](https://github.com/kenxcomp/yabaibye/releases/tag/v0.1.3%2B4). This optimized universal Release build for Apple Silicon and Intel is signed with Developer ID and notarized by Apple. Other releases may have different signing status: the GitHub Actions Release workflow currently produces explicitly labeled, non-notarized packages. Check each release's notes and `release.json`. Local runtime validation covers Apple Silicon; Intel and every supported macOS version have not been individually tested.
 
 Drag `Yabaibye.app` into **Applications**, open it, grant Accessibility access and enable window management. The main window shows the actual version/build and **登录时启动** (Start at login). Enable it there; if macOS approval is required, the app opens Login Items settings and shows a pending status until approval. This starts the app after user login, not before login as a system daemon.
 
-Release archives include `SHA256SUMS`. See [the packaging guide](docs/RELEASING.md) for automatic version increments and optional Developer ID notarization.
+Release archives include `SHA256SUMS`. See [the packaging guide](docs/RELEASING.md) for automatic version increments, Developer ID signing and notarization.
 
 ### Build from source
 
@@ -137,7 +137,7 @@ No. It enlarges the active window within the current desktop's usable area, keep
 
 ### Where can I download it or install it with Homebrew?
 
-Download the DMG or ZIP from [GitHub Releases](https://github.com/kenxcomp/yabaibye/releases/latest). These initial releases are not notarized; there is no Homebrew formula/cask. The [macOS workflow](https://github.com/kenxcomp/yabaibye/actions/workflows/ci.yml) also produces development build artifacts; these are not notarized releases.
+Download the [notarized 0.1.3 (4) release](https://github.com/kenxcomp/yabaibye/releases/tag/v0.1.3%2B4). There is no Homebrew formula/cask. GitHub Actions Release packages and [CI development artifacts](https://github.com/kenxcomp/yabaibye/actions/workflows/ci.yml) are currently not notarized; their labels distinguish them from notarized releases.
 
 ## Documentation and contributing
 

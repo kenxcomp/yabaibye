@@ -22,9 +22,11 @@ python3 script/package_release.py
 
 ## 签名与公证
 
-首个版本使用临时签名（ad-hoc），启用 Hardened Runtime 和默认库校验，无放宽运行时保护的 entitlement。它是优化后的 Release 包，**并不等于 Apple 已公证的可信分发包**。下载后可能被 Gatekeeper 或组织策略拦截；不提供移除 quarantine、关闭 Gatekeeper 或关闭 SIP 的方法。
+首个公开版本 `0.1.2 (3)` 使用临时签名（ad-hoc），未经 Apple 公证。`0.1.3 (4)` 通过本机 Developer ID 签名和公证流程发布；GitHub Actions 的 Release 工作流尚未配置证书及公证凭证，仍生成未公证包。每份产物的签名、公证状态记录在其 `release.json` 和发布说明中。
 
-以后准备好自己的 Developer ID Application 身份及本机 Keychain 公证配置后：
+所有包启用 Hardened Runtime 和默认库校验，无放宽运行时保护的 entitlement。未公证下载包可能被 Gatekeeper 或组织策略拦截；不提供移除 quarantine、关闭 Gatekeeper 或关闭 SIP 的方法。
+
+使用自己的 Developer ID Application 身份及本机 Keychain 公证配置生成已公证包：
 
 ```sh
 YABAIBYE_RELEASE_IDENTITY='Developer ID Application: Your Name (TEAMID)' \
@@ -38,4 +40,4 @@ python3 script/package_release.py
 
 打开 DMG，将应用复制到 `/Applications/Yabaibye.app`，从固定安装位置运行。首次授权辅助功能后，点击启用管理。主窗口的“开启登录启动”通过 `SMAppService.mainApp` 注册；状态须为“已开启”，若待批准则先在系统登录项设置批准。macOS 登录启动仍要求用户登录后才运行；安装验证不通过注销或重启打断用户工作。
 
-从源码路径改到 Applications 或临时签名更新时，系统可能要求再次授权。更新时正常退出旧应用，再替换完整应用包；需要回退时先保留上一份完整应用。偏好及布局不随包替换而删除。
+从源码路径改到 Applications、临时签名更新或从 ad-hoc 切换到 Developer ID 身份时，系统可能要求再次授权。更新时正常退出旧应用，再替换完整应用包；需要回退时先保留上一份完整应用。偏好及布局不随包替换而删除。

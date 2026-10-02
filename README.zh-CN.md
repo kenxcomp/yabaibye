@@ -8,7 +8,7 @@
 
 原生 macOS 菜单栏应用，以保持 **SIP 开启**为设计目标。Swift + AppKit，内置快捷键，不依赖 yabai、skhd、Hammerspoon，也不向 Dock 注入代码。
 
-**0.1.0 开发预览**：原生 Space 操作使用未公开的 SkyLight 查询、WindowManager 移窗桥接接口和 Mission Control 辅助功能。它们不是 Apple 保证稳定的 API。已在 macOS 27.2（26B5091g）、完整 SIP 开启、双屏环境通过窗口及 Space 自检，见[验证记录](docs/VALIDATION.md)。其他环境请运行菜单里的自检，不能用编译成功替代。
+**开发预览**：原生 Space 操作使用未公开的 SkyLight 查询、WindowManager 移窗桥接接口和 Mission Control 辅助功能。它们不是 Apple 保证稳定的 API。已在 macOS 27.2（26B5091g）、完整 SIP 开启、双屏环境通过窗口及 Space 自检，见[验证记录](docs/VALIDATION.md)。其他环境请运行菜单里的自检，不能用编译成功替代。
 
 ## 能做什么
 
@@ -58,15 +58,15 @@
 
 ## 构建与启动
 
-先从 [GitHub Releases](https://github.com/kenxcomp/yabaibye/releases/latest) 下载 DMG 或 ZIP，将 `Yabaibye.app` 拖到 **Applications（应用程序）** 后打开。首个下载包是 Apple Silicon / Intel 通用架构的优化 **Release 构建，临时签名、未经 Apple 公证**；系统或组织策略可能阻止下载包启动，请勿关闭系统安全保护。本机验证为 Apple Silicon，不代表 Intel 或全部最低版本系统均已实测。
+下载 [已公证的 0.1.3 (4) DMG 或 ZIP](https://github.com/kenxcomp/yabaibye/releases/tag/v0.1.3%2B4)，将 `Yabaibye.app` 拖到 **Applications（应用程序）** 后打开。该版本为 Apple Silicon / Intel 通用架构的优化 Release 构建，使用 Developer ID 签名并通过 Apple 公证。其他发布的签名状态以各自说明及 `release.json` 为准：GitHub Actions 的 Release 工作流目前仍生成明确标注的未公证包。本机运行验证为 Apple Silicon，不代表 Intel 或全部 macOS 14+ 系统均已实测。
 
 主窗口现在直接显示版本、构建号与 **登录时启动** 状态。点击“开启登录启动”；若系统要求批准，应用会打开登录项设置并显示“等待系统批准”，返回应用后刷新。它在用户登录 macOS 后启动，不是登录前的系统服务。
 
-每次成功正式打包默认自动递增补丁版本和构建号，下载附带 `SHA256SUMS` 校验值。发布与可选公证方法见 [打包说明](docs/RELEASING.md)。
+每次成功正式打包默认自动递增补丁版本和构建号，下载附带 `SHA256SUMS` 校验值。发布、签名与公证方法见 [打包说明](docs/RELEASING.md)。
 
 以下为源码开发方式：
 
-构建声明要求 macOS 14+、Swift 5.9+ / Xcode Command Line Tools；这不代表所有这些系统版本均已实测。无外部包依赖。开发构建不自动升版；当前下载包尚无 Developer ID 公证。应用界面目前为中文。
+构建声明要求 macOS 14+、Swift 5.9+ / Xcode Command Line Tools；这不代表所有这些系统版本均已实测。无外部包依赖。开发构建不自动升版。应用界面目前为中文。
 
 ```sh
 git clone https://github.com/kenxcomp/yabaibye.git
@@ -83,7 +83,7 @@ swift test
 4. 点击菜单栏 `YB Ⅱ` → **启用窗口管理**。
 5. 菜单栏可暂停、重新平铺、打开三个独立测试窗口练习拖拽、查看 Space 列表、复制不含窗口标题的诊断、开关登录时启动，以及运行自检。
 
-本机构建默认使用临时签名，修改代码重签名后系统可能要求重新授权辅助功能。使用自己的稳定签名身份可设置 `YABAIBYE_SIGN_IDENTITY`，或在被 Git 忽略的 `.signing-identity` 文件中写入签名身份。尚未进行 Developer ID 公证；不提供绕过 Gatekeeper 的安装步骤。
+本机构建默认使用临时签名，修改代码重签名后系统可能要求重新授权辅助功能。使用自己的稳定签名身份可设置 `YABAIBYE_SIGN_IDENTITY`，或在被 Git 忽略的 `.signing-identity` 文件中写入签名身份。源码开发构建默认不提交公证；正式签名与公证方法见[打包说明](docs/RELEASING.md)。
 
 构建默认启用 Hardened Runtime 和默认库校验，并自动检查没有放宽运行时保护的 entitlement。可运行 `./script/verify_security.sh dist/Yabaibye.app` 复核；本地签名保护检查不等于 Apple 公证。
 
