@@ -43,6 +43,14 @@ Drop in the **center** to swap, or at the **top, bottom, left, or right edge** t
 
 ## Get started
 
+### Download and install
+
+Download a DMG or ZIP from [GitHub Releases](https://github.com/kenxcomp/yabaibye/releases/latest). The initial release is an optimized **universal Release build** for Apple Silicon and Intel, **ad-hoc signed and not Apple notarized**. macOS or your organization's policy may block it; do not disable system security protections. Intel and the minimum macOS target are not individually certified by our local Apple Silicon validation.
+
+Drag `Yabaibye.app` into **Applications**, open it, grant Accessibility access and enable window management. The main window shows the actual version/build and **登录时启动** (Start at login). Enable it there; if macOS approval is required, the app opens Login Items settings and shows a pending status until approval. This starts the app after user login, not before login as a system daemon.
+
+Release archives include `SHA256SUMS`. See [the packaging guide](docs/RELEASING.md) for automatic version increments and optional Developer ID notarization.
+
 ### Build from source
 
 The package declares **macOS 14+** and **Swift 5.9+**. Install Xcode or the Xcode Command Line Tools with a suitable Swift toolchain. The project has no third-party package dependencies.
@@ -54,7 +62,7 @@ swift test
 ./script/build_and_run.sh --verify
 ```
 
-This builds and opens `dist/Yabaibye.app`. First launch starts with window management paused. Source builds are the current installation path; there is no notarized public installer yet. The build script uses ad-hoc signing unless you configure your own stable signing identity. Rebuilding with a different identity can require Accessibility authorization again.
+This builds and opens `dist/Yabaibye.app`. First launch starts with window management paused. This development command does not increment the version. The build script uses ad-hoc signing unless you configure your own stable signing identity. Rebuilding with a different identity can require Accessibility authorization again.
 
 Every bundle build enables Hardened Runtime with default library validation and checks that no runtime exception entitlements were added. You can repeat this check with `./script/verify_security.sh dist/Yabaibye.app`; this verifies local signing protection, not Apple notarization.
 
@@ -129,7 +137,7 @@ No. It enlarges the active window within the current desktop's usable area, keep
 
 ### Where can I download it or install it with Homebrew?
 
-For this preview, use the [source build instructions](#build-from-source). A Homebrew formula/cask and a notarized installer are not currently provided. The [macOS workflow](https://github.com/kenxcomp/yabaibye/actions/workflows/ci.yml) also produces development build artifacts; these are not notarized releases.
+Download the DMG or ZIP from [GitHub Releases](https://github.com/kenxcomp/yabaibye/releases/latest). These initial releases are not notarized; there is no Homebrew formula/cask. The [macOS workflow](https://github.com/kenxcomp/yabaibye/actions/workflows/ci.yml) also produces development build artifacts; these are not notarized releases.
 
 ## Documentation and contributing
 

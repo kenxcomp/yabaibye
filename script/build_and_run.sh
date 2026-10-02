@@ -18,28 +18,9 @@ if [[ "$MODE" != --diagnose ]]; then
 fi
 swift build
 BIN_DIR="$(swift build --show-bin-path)"
-mkdir -p "$APP_BUNDLE/Contents/MacOS"
-cp "$BIN_DIR/Yabaibye" "$APP_BUNDLE/Contents/MacOS/Yabaibye"
-cat > "$APP_BUNDLE/Contents/Info.plist" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>Yabaibye</string>
-<key>CFBundleIdentifier</key><string>com.kenxcomp.yabaibye</string>
-<key>CFBundleName</key><string>Yabaibye</string>
-<key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.1.0</string>
-<key>CFBundleVersion</key><string>1</string>
-<key>LSMinimumSystemVersion</key><string>14.0</string>
-<key>LSUIElement</key><true/>
-<key>NSPrincipalClass</key><string>NSApplication</string>
-<key>NSHighResolutionCapable</key><true/>
-</dict></plist>
-PLIST
 SIGN_IDENTITY="${YABAIBYE_SIGN_IDENTITY:-}"
 if [[ -z "$SIGN_IDENTITY" && -f .signing-identity ]]; then SIGN_IDENTITY="$(cat .signing-identity)"; fi
-codesign --force --options runtime --sign "${SIGN_IDENTITY:--}" "$APP_BUNDLE"
-./script/verify_security.sh "$APP_BUNDLE"
+python3 script/bundle_app.py --binary "$BIN_DIR/Yabaibye" --output "$APP_BUNDLE" --identity "${SIGN_IDENTITY:--}"
 case "$MODE" in
   --build-only) echo "$APP_BUNDLE" ;;
   --diagnose) "$APP_BUNDLE/Contents/MacOS/Yabaibye" --diagnose ;;

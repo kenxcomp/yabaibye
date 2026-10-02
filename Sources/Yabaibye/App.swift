@@ -10,6 +10,8 @@ import YabaibyeCore
     private var helpWindow: NSWindow?
     private var statusItem: NSMenuItem?
     private var helpStatus: NSTextField?
+    private var loginStatus: NSTextField?
+    private var loginButton: NSButton?
     private let spacingSettings = SpacingSettings()
     private let shortcutSettings = ShortcutSettings()
     private var helpKeys: NSTextField?
@@ -57,7 +59,9 @@ import YabaibyeCore
         showHelp()
         return true
     }
+    func applicationDidBecomeActive(_ notification: Notification) { refreshLoginStatus() }
     func menuWillOpen(_ menu: NSMenu) {
+        refreshLoginStatus()
         menu.removeAllItems()
         statusItem = add(manager.status, to: menu)
         menu.addItem(.separator())
@@ -80,8 +84,9 @@ import YabaibyeCore
         }
         menu.addItem(.separator())
         add(AXIsProcessTrusted() ? "辅助功能权限：已授权" : "授予辅助功能权限…", to: menu, action: #selector(requestAccess))
-        let login = add("登录时启动", to: menu, action: #selector(toggleLogin))
-        login.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        let login = add(loginPresentation.status, to: menu, action: #selector(toggleLogin))
+        login.state = SMAppService.mainApp.status == .enabled ? .on : (SMAppService.mainApp.status == .requiresApproval ? .mixed : .off)
+        login.isEnabled = loginPresentation.available
         add("使用说明与快捷键…", to: menu, action: #selector(showHelp))
         add("拖拽布局练习…", to: menu, action: #selector(runDragPractice))
         add("布局自检（不切换桌面）", to: menu, action: #selector(runLayoutSmokeTest))
@@ -128,11 +133,44 @@ import YabaibyeCore
         _ = AXIsProcessTrustedWithOptions(options)
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     }
+    private var loginPresentation: (status: String, action: String, available: Bool) {
+        switch SMAppService.mainApp.status {
+        case .enabled: return ("登录时启动：已开启", "关闭登录启动", true)
+        case .notRegistered: return ("登录时启动：未开启", "开启登录启动", true)
+        case .requiresApproval: return ("登录时启动：等待系统批准", "前往系统设置批准…", true)
+        case .notFound: return ("登录时启动：需要重新注册", "注册登录启动", true)
+        @unknown default: return ("登录时启动：未知状态", "暂不可用", false)
+        }
+    }
+    private func refreshLoginStatus() {
+        let presentation = loginPresentation
+        loginStatus?.stringValue = presentation.status
+        loginButton?.title = presentation.action
+        loginButton?.isEnabled = presentation.available
+    }
     @objc func toggleLogin() {
         do {
-            if SMAppService.mainApp.status == .enabled { try SMAppService.mainApp.unregister() }
-            else { try SMAppService.mainApp.register() }
-        } catch { showError(error) }
+            switch SMAppService.mainApp.status {
+            case .enabled: try SMAppService.mainApp.unregister()
+            case .notRegistered, .notFound:
+                // A newly installed or moved app may have no resolvable service yet.
+                // Let registration return the actual error instead of blocking repair.
+                try SMAppService.mainApp.register()
+                if SMAppService.mainApp.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
+            case .requiresApproval: SMAppService.openSystemSettingsLoginItems()
+            @unknown default: throw AppFailure("系统返回了未知的登录启动状态，请稍后重试。")
+            }
+            refreshLoginStatus()
+        } catch {
+            refreshLoginStatus()
+            showError(error, title: "无法更改登录启动")
+        }
+    }
+    private static var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+    }
+    private static var appBuild: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
     }
     @objc func copyDiagnostics() {
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(Self.diagnostics(), forType: .string)
@@ -153,7 +191,7 @@ import YabaibyeCore
         let spaces = Spaces()
         var data: [String: Any] = [
             "keepForegroundOnTop": ForegroundKeeper.enabled, "tilingPadding": LayoutSpacing.load().padding, "tilingGap": LayoutSpacing.load().gap,
-            "sipStatus": sipStatus(), "version": "0.1.0", "os": ProcessInfo.processInfo.operatingSystemVersionString,
+            "sipStatus": sipStatus(), "version": appVersion, "build": appBuild, "os": ProcessInfo.processInfo.operatingSystemVersionString,
             "accessibilityTrusted": AXIsProcessTrusted(), "postEventsAllowed": CGPreflightPostEventAccess(),
             "spaceReadSymbols": YBHasSpaceReadAPI(), "spaceMoveSymbols": YBHasWindowMoveAPI(), "bridgedWindowMoveAPI": YBHasBridgedWindowMoveAPI(),
             "separateSpaces": NSScreen.screensHaveSeparateSpaces, "conflictingProcesses": WindowManager.conflicts(),
@@ -203,6 +241,7 @@ import YabaibyeCore
         showHelp(); alert.beginSheetModal(for: helpWindow!)
     }
     @objc func showHelp() {
+        refreshLoginStatus()
         if let helpWindow { helpWindow.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 650), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Yabaibye"; window.isReleasedWhenClosed = false; window.center()
@@ -210,8 +249,14 @@ import YabaibyeCore
         stack.translatesAutoresizingMaskIntoConstraints = false
         let title = NSTextField(labelWithString: "你的桌面，键盘掌控。")
         title.font = .systemFont(ofSize: 26, weight: .bold); stack.addArrangedSubview(title)
-        let subtitle = NSTextField(wrappingLabelWithString: "原生 Space · 自动平铺 · 独立快捷键\n不需要关闭 SIP，不依赖 yabai 或 skhd。")
+        let subtitle = NSTextField(wrappingLabelWithString: "原生 Space · 自动平铺 · 独立快捷键\n不需要关闭 SIP，不依赖 yabai 或 skhd。\n版本 \(Self.appVersion)（构建 \(Self.appBuild)）")
         subtitle.textColor = .secondaryLabelColor; stack.addArrangedSubview(subtitle)
+        let login = NSStackView(); login.orientation = .horizontal; login.spacing = 12
+        let loginLabel = NSTextField(labelWithString: loginPresentation.status)
+        let loginAction = NSButton(title: loginPresentation.action, target: self, action: #selector(toggleLogin))
+        loginStatus = loginLabel; loginButton = loginAction
+        login.addArrangedSubview(loginLabel); login.addArrangedSubview(loginAction)
+        stack.addArrangedSubview(login); refreshLoginStatus()
         let keys = NSTextField(wrappingLabelWithString: shortcutSummary)
         keys.font = .monospacedSystemFont(ofSize: 14, weight: .regular); stack.addArrangedSubview(keys); helpKeys = keys
         stack.addArrangedSubview(NSButton(title: "快捷键设置…", target: self, action: #selector(showShortcutSettings)))
@@ -227,13 +272,25 @@ import YabaibyeCore
         stack.addArrangedSubview(NSButton(title: "拖拽布局练习（仅测试窗口）", target: self, action: #selector(runDragPractice)))
         let status = NSTextField(wrappingLabelWithString: manager.status); status.textColor = .secondaryLabelColor
         helpStatus = status; stack.addArrangedSubview(status)
-        window.contentView?.addSubview(stack)
-        NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor, constant: 28), stack.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor, constant: -28), stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 28)])
+        let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
+        scroll.drawsBackground = false; scroll.translatesAutoresizingMaskIntoConstraints = false
+        let document = HelpDocumentView(); document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(stack); scroll.documentView = document
+        let content = window.contentView!; content.addSubview(scroll)
+        NSLayoutConstraint.activate([
+            scroll.leadingAnchor.constraint(equalTo: content.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: content.topAnchor), scroll.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            stack.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: 28),
+            stack.trailingAnchor.constraint(equalTo: document.trailingAnchor, constant: -28),
+            stack.topAnchor.constraint(equalTo: document.topAnchor, constant: 28),
+            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -28)
+        ])
         helpWindow = window; window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
     }
-    private func showError(_ error: Error) {
+    private func showError(_ error: Error, title: String = "暂时无法启用") {
         manager.report(error.localizedDescription, error: true)
-        let alert = NSAlert(); alert.messageText = "暂时无法启用"; alert.informativeText = error.localizedDescription
+        let alert = NSAlert(); alert.messageText = title; alert.informativeText = error.localizedDescription
         showHelp(); alert.beginSheetModal(for: helpWindow!)
     }
     @objc func quit() { NSApp.terminate(nil) }
@@ -250,6 +307,10 @@ import YabaibyeCore
         return .terminateLater
     }
 }
+private final class HelpDocumentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 @main
 struct YabaibyeApp {
     @MainActor static func main() {

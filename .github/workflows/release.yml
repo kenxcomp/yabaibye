@@ -1,0 +1,59 @@
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version increment (each successful package also increments build)
+        type: choice
+        options: [patch, minor, major, build]
+        default: patch
+permissions:
+  contents: write
+concurrency:
+  group: yabaibye-release
+  cancel-in-progress: false
+jobs:
+  package:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Test and package universal Release (not notarized)
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: python3 script/package_release.py --bump "$BUMP"
+      - name: Prepare release metadata
+        id: metadata
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          data = json.loads(Path('version.json').read_text())
+          tag = f"v{data['version']}+{data['build']}"
+          directory = f"dist/releases/{data['version']}-{data['build']}-universal"
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f"tag={tag}\ndirectory={directory}\n")
+          Path('dist/release-notes.md').write_text(
+              f"Yabaibye {data['version']} ({data['build']})\n\n"
+              "Optimized universal Release build for Apple Silicon and Intel Macs (macOS 14+).\n\n"
+              "**NOT NOTARIZED / 未经 Apple 公证**: ad-hoc signed with Hardened Runtime; "
+              "macOS or organization policy may block downloaded apps. Do not disable security protections.\n\n"
+              "Download the DMG or ZIP, install Yabaibye.app in Applications, grant Accessibility access, "
+              "then enable management. The main window provides the login-start switch.\n\n"
+              "See SHA256SUMS for download verification; minimum OS is a build target, not full compatibility certification.\n")
+          PY
+      - name: Commit version and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          RELEASE_DIRECTORY: ${{ steps.metadata.outputs.directory }}
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add version.json
+          git commit -m "Release $TAG"
+          git tag "$TAG" HEAD
+          git push --atomic origin HEAD:main "refs/tags/$TAG"
+          gh release create "$TAG" "$RELEASE_DIRECTORY"/*.dmg "$RELEASE_DIRECTORY"/*.zip "$RELEASE_DIRECTORY/SHA256SUMS" "$RELEASE_DIRECTORY/release.json" --verify-tag --title "Yabaibye $TAG (not notarized)" --notes-file dist/release-notes.md

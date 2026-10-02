@@ -7,6 +7,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Test release version and failure handling
+        run: python3 -m unittest discover -s script/tests
       - name: Test routing, shortcuts, and geometry
         run: swift test
       - name: Build app bundle

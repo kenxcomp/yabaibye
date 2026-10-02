@@ -58,7 +58,15 @@
 
 ## 构建与启动
 
-构建声明要求 macOS 14+、Swift 5.9+ / Xcode Command Line Tools；这不代表所有这些系统版本均已实测。无外部包依赖。当前推荐从源码构建，尚无 Developer ID 公证的正式安装包。应用界面目前为中文。
+先从 [GitHub Releases](https://github.com/kenxcomp/yabaibye/releases/latest) 下载 DMG 或 ZIP，将 `Yabaibye.app` 拖到 **Applications（应用程序）** 后打开。首个下载包是 Apple Silicon / Intel 通用架构的优化 **Release 构建，临时签名、未经 Apple 公证**；系统或组织策略可能阻止下载包启动，请勿关闭系统安全保护。本机验证为 Apple Silicon，不代表 Intel 或全部最低版本系统均已实测。
+
+主窗口现在直接显示版本、构建号与 **登录时启动** 状态。点击“开启登录启动”；若系统要求批准，应用会打开登录项设置并显示“等待系统批准”，返回应用后刷新。它在用户登录 macOS 后启动，不是登录前的系统服务。
+
+每次成功正式打包默认自动递增补丁版本和构建号，下载附带 `SHA256SUMS` 校验值。发布与可选公证方法见 [打包说明](docs/RELEASING.md)。
+
+以下为源码开发方式：
+
+构建声明要求 macOS 14+、Swift 5.9+ / Xcode Command Line Tools；这不代表所有这些系统版本均已实测。无外部包依赖。开发构建不自动升版；当前下载包尚无 Developer ID 公证。应用界面目前为中文。
 
 ```sh
 git clone https://github.com/kenxcomp/yabaibye.git

@@ -5,3 +5,6 @@ dist/
 *.xcuserstate
 
 .signing-identity
+
+__pycache__/
+version.json.next
