@@ -23,7 +23,8 @@ Looking for a **yabai alternative** with built-in hotkeys? Yabaibye combines a m
 | **Customizable keyboard shortcuts** | Change the key and modifiers for all 28 actions, with duplicate and registration-conflict checks. |
 | **Adjustable padding and gaps** | Set screen-edge padding and window spacing independently from 0–100 pt. |
 | **Window zoom and floating** | Fill the current desktop's usable area and restore it, or toggle an individual window between tiled and floating. |
-| **Layout persistence** | Keep tiled/floating membership and restore custom partitions for still-open windows across restarts within the same login session. |
+| **Layout persistence** | Remember display, Space, relative frame, tiled/floating state and custom partitions for windows that can be identified after reopening. |
+| **In-app updates** | Check for stable releases and download, verify, install and relaunch after user confirmation. |
 | **Foreground-window protection** | Attempt to raise the active window above overlapping ordinary background windows, with up to four attempts and increasing delays per obstruction episode. Recheck both app and window focus before each attempt without changing app focus or window levels. |
 
 ## Drag to split or swap
@@ -80,7 +81,15 @@ Keep SIP enabled. Yabaibye does not require an administrator daemon, kernel exte
 
 When Yabaibye first establishes a baseline in a login session, existing windows are enrolled for tiling, including those on other Spaces or currently minimized. Windows created afterward float by default: Yabaibye keeps their application-provided position and size and does not rearrange the tiled windows for them. Press **Option+T** to add the focused window to tiling or make it floating.
 
-Membership persists within the same login session. Pausing, resuming, or restarting Yabaibye does not enroll floating windows, and temporarily hiding or minimizing a tiled window does not forget its membership. A new login session, including after restarting macOS, establishes a new baseline. The grid rules apply only to tiled windows. The pre-tiling size used when returning a window to floating is remembered only during the current Yabaibye run.
+Membership persists within the same login session. With **记住窗口布局** (Remember window layouts) enabled, stable records also restore matched windows after an application restart or a new login, including their pre-tiling floating frame. Unrecognized new windows retain the normal baseline behavior. The grid rules apply only to tiled windows.
+
+## Window memory and updates
+
+**记住窗口布局** (Remember window layouts) is on by default. While management is enabled, Yabaibye remembers each supported window's display, ordinary Space, relative frame, tiled/floating state and custom partition. Records survive window closure. When the app creates a matching window again, Yabaibye restores it without launching other apps or creating/deleting Spaces. Keep macOS automatic Space reordering disabled for predictable desktop numbering.
+
+Application identity and hashes of accessibility window metadata identify recreated windows; raw titles and document paths are not stored. Ambiguous multi-window matches are skipped. Disconnected displays, unavailable Spaces and failed restoration preserve the saved destination. Fullscreen, shared-desktop and non-resizable windows are excluded. Menu controls let you disable memory or clear its local records.
+
+**自动检查更新** (Automatically check for updates) is on by default; **检查更新…** (Check for updates) checks manually. A stable release prompts before downloading and installing. Automatic installation requires a writable Applications location, the same Developer ID team on both bundles, notarization and download integrity checks. Ad-hoc development builds and non-notarized releases cannot be installed automatically. Yabaibye relaunches with preferences and layouts preserved. See [release details](docs/RELEASING.md).
 
 ## Default shortcuts
 
@@ -114,7 +123,7 @@ All bindings are editable in **快捷键设置…**. Changing a focus shortcut d
 | Native Spaces | Private SkyLight / WindowManager interfaces and Mission Control AX navigation; system updates may change behavior. |
 | Managed windows | Resizable standard windows. Minimized windows, dialogs, native fullscreen windows, and windows assigned to all desktops are excluded. |
 | App size constraints | Some applications enforce minimum dimensions; make such windows floating if they cannot fit a tile. |
-| Persistence | Surviving windows in the same login session. Rebooting macOS or recreating application windows is outside the current restoration scope. |
+| Persistence | Matched standard windows across app restarts and logins; ambiguous windows and unavailable target displays/Spaces are skipped without discarding their saved records. |
 | Foreground protection | Best effort for ordinary background windows. System panels and applications that actively steal focus are outside its scope. |
 
 ## FAQ

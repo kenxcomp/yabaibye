@@ -16,8 +16,10 @@ import YabaibyeCore
     private let shortcutSettings = ShortcutSettings()
     private var helpKeys: NSTextField?
     private let foregroundKeeper = ForegroundKeeper()
+    private let updater = UpdateController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if UpdateInstaller.handleCommandLine() { return }
         if let index = CommandLine.arguments.firstIndex(of: "--diagnose-window-levels") {
             for argument in CommandLine.arguments.dropFirst(index + 1) {
                 guard let id = UInt32(argument) else { continue }
@@ -35,15 +37,23 @@ import YabaibyeCore
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: "com.kenxcomp.yabaibye").filter { $0.processIdentifier != getpid() }
         guard others.isEmpty else { NSApp.terminate(nil); return }
         ownsLifecycle = true
+        updater.canInstall = { [weak self] in
+            guard let self else { return false }
+            return self.smokeTest == nil && self.practice == nil
+        }
+        updater.start()
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "YB Ⅱ"
-        item.button?.toolTip = "Yabaibye — 原生 Space 与窗口平铺"
+        // AppKit owns tooltip lifetime across Space transitions. Transient status
+        // text here can leave a help tag on another desktop without a mouse exit.
+        // Keep status in the menu and accessibility label instead.
+        item.button?.setAccessibilityLabel("Yabaibye — 原生 Space 与窗口平铺")
         let menu = NSMenu(); menu.delegate = self; item.menu = menu
         foregroundKeeper.start()
         manager.changed = { [weak self] in
             guard let self else { return }
             self.item.button?.title = self.manager.enabled ? "YB" : "YB Ⅱ"
-            self.item.button?.toolTip = self.manager.status
+            self.item.button?.setAccessibilityLabel("Yabaibye：\(self.manager.status)")
             self.statusItem?.title = self.manager.status
             self.helpStatus?.stringValue = self.manager.status
         }
@@ -70,6 +80,10 @@ import YabaibyeCore
         add("快捷键设置…", to: menu, action: #selector(showShortcutSettings))
         let foreground = add("保持前台窗口在上层", to: menu, action: #selector(toggleForeground))
         foreground.state = ForegroundKeeper.enabled ? .on : .off
+        let memory = add("记住窗口布局", to: menu, action: #selector(toggleWorkspaceMemory))
+        memory.state = manager.remembersWorkspace ? .on : .off
+        add("重试恢复窗口布局", to: menu, action: #selector(retryWorkspaceMemory))
+        add("清除窗口布局记忆…", to: menu, action: #selector(clearWorkspaceMemory))
         add("放大 / 恢复当前窗口（\(ShortcutPreferences.load().first { $0.command == .toggleZoom }!.label)）", to: menu, action: #selector(toggleZoom))
         add("重新平铺当前桌面", to: menu, action: #selector(retile))
         if let displays = try? manager.spaces.snapshot() {
@@ -94,6 +108,12 @@ import YabaibyeCore
         add("查看上次自检结果…", to: menu, action: #selector(showLastSmokeTest))
         add("复制诊断信息", to: menu, action: #selector(copyDiagnostics))
         menu.addItem(.separator())
+        let update = add("检查更新…", to: menu, action: #selector(checkForUpdates))
+        update.isEnabled = !updater.isBusy
+        let automatic = add("自动检查更新", to: menu, action: #selector(toggleAutomaticUpdates))
+        automatic.state = updater.automaticallyChecks ? .on : .off
+        add(updater.lastResult, to: menu)
+        menu.addItem(.separator())
         add("退出 Yabaibye", to: menu, action: #selector(quit), key: "q")
     }
     @discardableResult private func add(_ title: String, to menu: NSMenu, action: Selector? = nil, key: String = "") -> NSMenuItem {
@@ -106,6 +126,20 @@ import YabaibyeCore
         else { do { try manager.start() } catch { showError(error) } }
     }
     @objc func toggleForeground() { ForegroundKeeper.enabled.toggle() }
+    @objc func checkForUpdates() { updater.check() }
+    @objc func toggleAutomaticUpdates() { updater.automaticallyChecks.toggle() }
+    @objc func toggleWorkspaceMemory() { manager.setRemembersWorkspace(!manager.remembersWorkspace) }
+    @objc func retryWorkspaceMemory() { manager.retryWorkspaceRestoration() }
+    @objc func clearWorkspaceMemory() {
+        let alert = NSAlert()
+        alert.messageText = "清除已保存的窗口布局？"
+        alert.informativeText = "只清除此用户的窗口位置和分区记忆。当前窗口不移动；记忆开启时会重新记录当前布局。"
+        alert.addButton(withTitle: "清除记忆"); alert.addButton(withTitle: "取消")
+        showHelp()
+        alert.beginSheetModal(for: helpWindow!) { [weak self] response in
+            if response == .alertFirstButtonReturn { self?.manager.clearWorkspaceMemory() }
+        }
+    }
     @objc func showSpacingSettings() {
         spacingSettings.onChange = { [weak self] in self?.manager.refresh(force: true) }
         spacingSettings.show()
@@ -299,6 +333,7 @@ import YabaibyeCore
         // Give cancellation defers a main-run-loop turn to restore temporary accessibility settings.
         let resume = manager.enabled || (practice != nil && resumeAfterPractice)
         foregroundKeeper.stop()
+        updater.stop()
         practice?.finish()
         manager.stop()
         smokeTest?.cancel()

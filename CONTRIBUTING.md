@@ -27,7 +27,7 @@ The script gracefully stops a running Yabaibye instance before replacing the app
 - Add regression coverage for routing, shortcuts, layout geometry, or persisted-state changes where appropriate.
 - Keep English and Chinese README instructions consistent when changing defaults or setup.
 - Preserve full-SIP operation. Do not require Dock injection or disabling system protections.
-- Avoid adding window titles or document contents to logs or persistent identifiers.
+- Never log or persist raw window titles, document paths or document contents. Workspace matching stores only locally salted digests of accessibility identity metadata; keep this data on the current user's device.
 
 For documentation-only changes, check relative links, anchors, and commands; a GUI rebuild is not required.
 

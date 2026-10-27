@@ -9,6 +9,11 @@ import YabaibyeCore
     private var timer: Timer?
     private var task: Task<Void, Never>?
     private var layoutTask: Task<Void, Never>?
+    private var workspaceTask: Task<Void, Never>?
+    private var workspaceGeneration = UUID()
+    private var isRemembering = false
+    private var pendingRestorations = Set<String>()
+    private var workspaceMemory: WorkspaceMemory?
     private var isLayingOut = false
     private var pendingCommand: Command?
     private var layouts: [UInt64: TileLayout] = [:]
@@ -41,7 +46,26 @@ import YabaibyeCore
         guard let window = rawFocusedWindow(), allowedWindows?.contains(window.identity) ?? true else { return nil }
         return window
     }
-    var isIdle: Bool { !busy && !isLayingOut }
+    var isIdle: Bool { !busy && !isLayingOut && !isRemembering }
+    var remembersWorkspace: Bool { workspaceMemory?.enabled == true }
+    func setRemembersWorkspace(_ enabled: Bool) {
+        workspaceTask?.cancel(); workspaceTask = nil
+        workspaceGeneration = UUID(); isRemembering = false
+        workspaceMemory?.enabled = enabled
+        pendingRestorations.removeAll()
+        refresh(force: true)
+    }
+    func clearWorkspaceMemory() {
+        workspaceTask?.cancel(); workspaceTask = nil
+        workspaceGeneration = UUID(); isRemembering = false
+        workspaceMemory?.clear()
+        pendingRestorations.removeAll()
+        report("已清除窗口布局记忆；启用记忆时会重新记录当前布局")
+    }
+    func retryWorkspaceRestoration() {
+        workspaceMemory?.retry()
+        refresh(force: true)
+    }
     init(visibleWindows: (@MainActor () -> [ManagedWindow])? = nil,
          focusedWindow: @escaping @MainActor () -> ManagedWindow? = { Windows.focused() },
          persistLayouts: Bool = true, layoutStore: LayoutPersistence? = nil,
@@ -71,6 +95,10 @@ import YabaibyeCore
         self.rawFocusedWindow = focusedWindow
         self.allowedWindows = allowedWindows; self.registerHotkeys = registerHotkeys
         self.managesUserPreferences = persistLayouts; self.applyFrames = applyFrames
+        // Practice, smoke tests and injected providers never read or alter the user's workspace archive.
+        if persistLayouts, allowedWindows == nil, visibleWindows == nil, snapshotProvider == nil {
+            workspaceMemory = WorkspaceMemory()
+        }
         hotkeys.onCommand = { [weak self] command in self?.execute(command) }
         drag.capture = { [weak self] point in self?.captureDrag(at: point) }
         drag.validate = { [weak self] context in self?.validateDrag(context) == true }
@@ -123,9 +151,16 @@ import YabaibyeCore
         refresh(force: true)
     }
     func stop() {
+        if enabled, !busy, !isLayingOut, !isRemembering, let memory = workspaceMemory,
+           let policy = tilingPolicy, let displays = try? spaces.snapshot() {
+            memory.captureOnly(displays: displays, policy: policy, originalFrames: originalFrames,
+                layouts: layouts, excluded: Set(zoomed.values.map { $0.window.identity }))
+        }
         drag.stop()
         task?.cancel(); task = nil
         layoutTask?.cancel(); pendingCommand = nil
+        workspaceTask?.cancel(); workspaceTask = nil
+        workspaceGeneration = UUID(); isRemembering = false
         timer?.invalidate(); timer = nil
         hotkeys.stop(); enabled = false
         if managesUserPreferences { UserDefaults.standard.set(false, forKey: "managerEnabled") }
@@ -146,7 +181,7 @@ import YabaibyeCore
     }
     func execute(_ command: Command) {
         guard enabled, !busy, !drag.isTracking else { return }
-        if isLayingOut { pendingCommand = command; return }
+        if isLayingOut || isRemembering { pendingCommand = command; return }
         guard AXIsProcessTrusted() else { stop(); report("辅助功能权限已撤销；管理已暂停。", error: true); return }
         busy = true
         task = Task { @MainActor [weak self] in
@@ -230,11 +265,37 @@ import YabaibyeCore
             catch { self.report(error.localizedDescription, error: true) }
         }
     }
-    func refresh(force: Bool = false) {
-        guard enabled, !busy, !isLayingOut, !drag.isTracking else { return }
+    func refresh(force: Bool = false, reconcileWorkspace: Bool = true) {
+        guard enabled, !busy, !isLayingOut, !isRemembering, !drag.isTracking else { return }
         guard AXIsProcessTrusted() else { stop(); report("辅助功能权限已撤销。", error: true); return }
         guard !CGEventSource.buttonState(.combinedSessionState, button: .left), spaces.missionControl() == nil,
               let displays = try? spaces.snapshot() else { return }
+        if reconcileWorkspace, let memory = workspaceMemory, memory.enabled, let policy = tilingPolicy {
+            isRemembering = true
+            let generation = workspaceGeneration
+            let excluded = Set(zoomed.values.map { $0.window.identity })
+            workspaceTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                let result = await memory.reconcile(displays: displays, policy: policy,
+                    originalFrames: self.originalFrames, layouts: self.layouts, excluded: excluded)
+                guard !Task.isCancelled, self.enabled, generation == self.workspaceGeneration else { return }
+                self.isRemembering = false; self.workspaceTask = nil
+                self.tilingPolicy = result.policy
+                self.persistence?.saveTilingPolicy(result.policy)
+                self.originalFrames = result.originalFrames
+                self.pendingRestorations = result.pendingWindows
+                if let notice = result.notice { self.report(notice) }
+                for (space, layout) in result.restoredLayouts {
+                    self.layouts[space] = layout
+                    self.applications.removeValue(forKey: space)
+                }
+                self.refresh(force: force, reconcileWorkspace: false)
+                if !self.isLayingOut, let command = self.pendingCommand {
+                    self.pendingCommand = nil; self.execute(command)
+                }
+            }
+            return
+        }
         let snapshot = snapshotProvider()
         guard snapshot.complete else { return }
         let windows = snapshot.windows.filter { allowedWindows?.contains($0.identity) ?? true }
@@ -255,6 +316,10 @@ import YabaibyeCore
         for display in displays {
             guard display.spaces.first(where: { $0.id == display.current })?.type == 0,
                   let screen = spaces.screen(for: display), snapshot.isReliable(on: screen.displayID) else { continue }
+            // Pending restoration is not evidence that a tile has closed. Apply a
+            // temporary layout to available members while retaining the saved tree.
+            let hasPending = windows.contains { pendingRestorations.contains($0.identity) && memberships[$0.id] == [display.current] }
+                || (layouts[display.current]?.ids.contains(where: { pendingRestorations.contains($0) }) ?? false)
             if let zoom = zoomed[display.current] {
                 let source = zoom.window
                 let minimized = AX.value(source.element, kAXMinimizedAttribute) as? Bool
@@ -276,15 +341,17 @@ import YabaibyeCore
                 }
             }
             let members = windows.filter {
-                tilingPolicy?.isTiled($0.identity) == true && memberships[$0.id] == [display.current] && Windows.screen(for: $0.frame)?.displayID == screen.displayID
+                !pendingRestorations.contains($0.identity) && tilingPolicy?.isTiled($0.identity) == true && memberships[$0.id] == [display.current] && Windows.screen(for: $0.frame)?.displayID == screen.displayID
             }
             tiledWindows[display.current] = members
             let ids = members.map(\.identity).sorted()
             layoutDisplays[display.current] = display.uuid
             var layout = layouts[display.current] ?? persistence?.layout(display: display.uuid, space: display.current) ?? TileLayout(ids: ids)
             layout.reconcile(ids)
-            layouts[display.current] = layout
-            persist(display.current)
+            if !hasPending {
+                layouts[display.current] = layout
+                persist(display.current)
+            }
             let signature = "\(screen.axVisibleFrame)@\(spacing.padding):\(spacing.gap)"
             guard applications[display.current, default: LayoutApplication()].needsApply(layout, signature: signature,
                         now: Date.timeIntervalSinceReferenceDate, force: force) else { continue }
@@ -347,7 +414,8 @@ import YabaibyeCore
     private func swap(_ direction: Direction) throws {
         guard let window = self.focusedWindow(), tilingPolicy?.isTiled(window.identity) == true,
               let space = spaces.memberships(window.id).first,
-              var layout = layouts[space], let index = layout.ids.firstIndex(of: window.identity),
+              var layout = layouts[space], Set(layout.ids) == Set(tiledWindows[space, default: []].map(\.identity)),
+              let index = layout.ids.firstIndex(of: window.identity),
               let screen = Windows.screen(for: window.frame) else { throw AppFailure("前台窗口不在平铺布局中。") }
         let spacing = LayoutSpacing.load()
         let geometry = layout.frames(in: screen.axVisibleFrame, gap: CGFloat(spacing.gap), padding: CGFloat(spacing.padding))
@@ -359,7 +427,7 @@ import YabaibyeCore
         report("已交换窗口位置")
     }
     private func captureDrag(at point: CGPoint) -> TileDragContext? {
-        guard enabled, !busy, !isLayingOut, AXIsProcessTrusted(), spaces.missionControl() == nil,
+        guard enabled, !busy, !isLayingOut, !isRemembering, AXIsProcessTrusted(), spaces.missionControl() == nil,
               let window = focusedWindow(), tilingPolicy?.isTiled(window.identity) == true,
               let space = spaces.memberships(window.id).first, zoomed[space] == nil,
               let members = tiledWindows[space], let source = members.first(where: { $0.identity == window.identity }),

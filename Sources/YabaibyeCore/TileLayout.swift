@@ -104,6 +104,18 @@ public struct TileLayout: Equatable, Codable {
         if zone != .center { customized = true }
         return true
     }
+    /// Translate live WindowServer identities to durable slots (and back), dropping missing leaves.
+    public func remapped(using identities: [String: String]) -> TileLayout {
+        func map(_ node: Node) -> Node? {
+            switch node {
+            case .window(let id): return identities[id].map(Node.window)
+            case .split(let axis, let children): return Node.split(axis, children.compactMap(map)).normalized()
+            }
+        }
+        var result = self
+        result.root = root.flatMap(map)
+        return result
+    }
     public func frames(in bounds: CGRect, gap: CGFloat = 10, padding: CGFloat? = nil) -> [String: CGRect] {
         guard bounds.width > 0, bounds.height > 0 else { return [:] }
         let requestedPadding = padding ?? gap

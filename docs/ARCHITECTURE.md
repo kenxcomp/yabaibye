@@ -9,14 +9,14 @@
 - `Spaces`：Space 快照、当前屏幕的系统左右桌面快捷键、Mission Control AX 导航、可验证的 WindowManager 桥接移窗。另一屏幕导航强制 Mission Control 定点选择并恢复原窗口焦点，避免系统 Control + 方向键切错屏幕。macOS 27 的 `mc.display` 位于 WindowManager 根节点，旧版位于 Dock 的 `mc` 容器。包括超时、取消和指针恢复。
 - `Windows`：AX 标准窗口枚举，以 CG 可见列表 + 单 Space 归属过滤，排除桌面、弹窗、全屏和共享窗口。
 - `WindowManager`：主线程串行操作，0.8 秒轮询可见窗口；仅对策略中的平铺成员协调布局，新增浮动窗口不触发重排。布局成员或工作区改变时重排，Space 操作期间暂停布局更新与新快捷键命令。
-- `WindowTilingPolicy`：记录本登录会话的显式平铺成员，未知窗口默认浮动。首次建立基线通过 `Windows.existingWindowIDs()` 纳入已有窗口，含其他 Space 和最小化窗口；之后仅显式切换修改成员，暂时不可见不删除归属。停止 / 重启管理保留策略，新登录会话重新建立基线。浮动恢复用的 `originalFrames` 仅保留于当前应用运行。
+- `WindowTilingPolicy`：记录本登录会话的显式平铺成员，未知窗口默认浮动。首次建立基线通过 `Windows.existingWindowIDs()` 纳入已有窗口，含其他 Space 和最小化窗口；之后仅显式切换修改成员，暂时不可见不删除归属。停止 / 重启管理保留策略，新登录会话重新建立基线；WorkspaceMemory 恢复稳定窗口记录后，覆盖对应成员状态，并恢复 `originalFrames`。
 - `Hotkeys`：Carbon `RegisterEventHotKey`，不是全局键盘录制；注册任一键失败便整体撤销。
 - `AppDelegate`：菜单栏、授权入口、登录项、诊断与首次使用说明。
 - `SmokeTest`：用户主动运行的真实窗口/Space 集成测试，恢复桌面且保留独立的 SIP 验收要求。
 
-权限仅为辅助功能；不读取窗口内容或标题作为持久化日志，不发送网络请求。标准 macOS 登录项通过 `SMAppService` 管理。
+窗口管理权限为辅助功能；不读取窗口内容，不持久化明文窗口标题或文档路径。更新检查仅向固定 GitHub 仓库及附件主机发送版本下载请求，不上传窗口数据。标准 macOS 登录项通过 `SMAppService` 管理。
 
-当前阶段不包含：任意分区比例配置、电脑重启或窗口重建后的身份匹配、Space 自动创建/删除、窗口透明度、动画关闭、焦点跟随鼠标。
+当前阶段不包含：任意分区比例配置、无法唯一识别的多窗口恢复、Space 自动创建/删除、窗口透明度、动画关闭、焦点跟随鼠标。
 
 窗口帧调整会临时关闭目标进程的 AXEnhancedUserInterface（仅当原来开启时），在结束/取消时恢复；这是避免辅助功能动画干扰几何更新的兼容处理。尺寸、位置、尺寸分阶段提交并等待稳定后读取实际值验证。
 
@@ -37,3 +37,17 @@
 - 只有通过单实例检查的主实例拥有退出清理和偏好保存责任；被拒绝的重复实例直接退出。
 
 - `--diagnose-window-levels` / `WindowDiagnostics.m`：显式调用的只读迁移诊断，独立于前台恢复轮询；通过运行时解析的 `SLSGetWindowSubLevel` 查询已知窗口 ID，不读取窗口内容、不使用层级 setter。普通 CG layer 无法反映旧 yabai 遗留的 below 子层级；AX Raise 也不能跨子层级恢复。这种旧窗口状态通过保存工作后重开所属应用处理，不加入永久跨进程层级覆盖。私有 getter 仅在 macOS 27.2 实测，缺失或窗口失效时返回 unknown。
+
+## 跨应用重开的布局记忆
+
+- `WorkspaceWindows` 枚举普通应用在所有 Space 的可调整窗口，排除最小化、隐藏、全屏和共享桌面窗口；使用每用户 archive 中的随机 salt 对 AXDocument、AXIdentifier、AXTitle 做摘要。窗口内容和明文身份不入库。
+- `WorkspaceArchive` 独立于登录会话布局缓存，记录稳定槽 ID、应用标识、窗口元数据摘要、显示器 UUID、普通 Space 的 ID/索引、相对可用区域的几何、平铺成员与浮动原始尺寸。相同会话只按 Space ID 恢复；跨登录按普通桌面索引恢复，避免系统重用旧 ID。窗口关闭保留槽，分区树也保留关闭窗口的分支。
+- `WorkspaceMatcher` 保留仍然存活的窗口绑定，再逐级匹配文档、标识和标题摘要，仅接受唯一对应；应用只存在一个当前窗口和一个保存记录时允许按应用回退。未知/歧义窗口记录为新槽，不猜测旧位置。
+- `WorkspaceMemory` 在完整快照和窗口身份稳定后串行恢复，不激活应用或切换用户桌面；位置尺寸以目标屏幕当前可用区域重算并限制在屏幕内。失败窗口最多自动尝试三次，保存记录不被失败后的临时几何覆盖；目标屏幕/Space 不可用时保留记录等待重试。菜单提供开关、显式重试与清除。
+- `WindowManager` 在平铺前完成记忆协调，未恢复窗口不进入平铺，避免提前改写应恢复的位置；退出时取消异步恢复，以 generation 拒绝迟到结果，空闲时进行最后同步保存。放大中的窗口跳过捕获，避免把临时放大几何当作工作布局；练习、自检和注入的测试枚举不加载用户 archive。
+
+## 状态与更新
+
+菜单栏状态只显示在菜单及辅助功能标签中，不设置瞬时状态的 AppKit tooltip。系统 tooltip 的退出依赖悬停生命周期，在 Mission Control 切换桌面时可残留，因此不承担切换结果通知。
+
+`UpdateController` 提供默认开启的定时检查、手动检查、确认弹窗和可取消下载。`UpdateNetwork` 限定 HTTPS GitHub 主机、重定向、超时及下载大小。`UpdateRelease` 校验正式 release 元数据、目标系统/架构、版本与 SHA-256；`UpdateArchive` 在解压前校验 ZIP 路径、条目类型和大小。`UpdateInstaller` 验证同一 Developer ID 团队、应用标识、版本与 Gatekeeper 评估；当前可写 Applications 安装才能替换。独立 helper 等待原进程正常退出，在目标卷暂存并校验后重命名替换；安装失败回退旧包。更新不触及其他应用、用户布局或辅助功能权限配置。正式发布流程保持人工触发，详见 [RELEASING](RELEASING.md)。
