@@ -271,9 +271,26 @@ def release_info(state):
     try:
         return json.loads(run("gh", "api", endpoint))
     except subprocess.CalledProcessError as error:
-        if "HTTP 404" in (error.stderr or ""):
+        if "HTTP 404" not in (error.stderr or ""):
+            raise
+    # GitHub's tag endpoint may hide a draft even from its publisher. gh's
+    # authenticated release lookup can resolve that draft's database ID.
+    try:
+        lookup = json.loads(run("gh", "release", "view", state["tag"], "--repo", state["repo"],
+                                "--json", "databaseId,tagName"))
+    except subprocess.CalledProcessError as error:
+        if (error.stderr or "").strip().lower() == "release not found":
             return None
         raise
+    release_id = lookup.get("databaseId")
+    if type(release_id) is not int or release_id <= 0 or lookup.get("tagName") != state["tag"]:
+        raise RuntimeError("Release lookup returned an unexpected tag or database ID")
+    endpoint = f"repos/{state['repo']}/releases/{release_id}"
+    release = json.loads(run("gh", "api", endpoint))
+    if (release.get("id") != release_id or release.get("tag_name") != state["tag"]
+            or str(release.get("url", "")).lower() != f"https://api.github.com/{endpoint}".lower()):
+        raise RuntimeError("Release lookup returned a different repository, tag or database ID")
+    return release
 
 
 def verify_downloads(state, release):

@@ -140,6 +140,59 @@ class PublisherTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             publisher.verify_artifacts(self.state)
 
+    def test_tag_404_resolves_draft_by_database_id_in_same_repository(self):
+        release = {"id": 42, "tag_name": self.state["tag"], "draft": True, "assets": [],
+                   "url": "https://api.github.com/repos/example/project/releases/42"}
+        missing_tag = subprocess.CalledProcessError(1, ["gh", "api"], stderr="gh: Not Found (HTTP 404)")
+        with patch.object(publisher, "run", side_effect=[
+                missing_tag, json.dumps({"databaseId": 42, "tagName": self.state["tag"]}),
+                json.dumps(release)]) as run:
+            self.assertEqual(publisher.release_info(self.state), release)
+        self.assertEqual([call.args for call in run.call_args_list], [
+            ("gh", "api", "repos/example/project/releases/tags/v1.0.1%2B2"),
+            ("gh", "release", "view", self.state["tag"], "--repo", "example/project", "--json", "databaseId,tagName"),
+            ("gh", "api", "repos/example/project/releases/42")])
+
+    def test_release_lookup_returns_none_only_for_explicit_not_found(self):
+        tag_error = subprocess.CalledProcessError(1, ["gh", "api"], stderr="gh: Not Found (HTTP 404)")
+        lookup_error = subprocess.CalledProcessError(1, ["gh", "release", "view"], stderr="release not found\n")
+        with patch.object(publisher, "run", side_effect=[tag_error, lookup_error]) as run:
+            self.assertIsNone(publisher.release_info(self.state))
+        self.assertEqual(run.call_count, 2)
+
+    def test_release_lookup_does_not_hide_permission_or_network_errors(self):
+        tag_error = subprocess.CalledProcessError(1, ["gh", "api"], stderr="gh: Not Found (HTTP 404)")
+        for detail in ["gh: Forbidden (HTTP 403)", "gh: Unauthorized (HTTP 401)",
+                       "error connecting to api.github.com", "gh: Not Found (HTTP 404)"]:
+            failure = subprocess.CalledProcessError(1, ["gh"], stderr=detail)
+            with self.subTest(detail=detail), patch.object(publisher, "run", side_effect=[tag_error, failure]):
+                with self.assertRaises(subprocess.CalledProcessError) as raised:
+                    publisher.release_info(self.state)
+                self.assertIs(raised.exception, failure)
+        forbidden = subprocess.CalledProcessError(1, ["gh", "api"], stderr="gh: Forbidden (HTTP 403)")
+        with patch.object(publisher, "run", side_effect=forbidden) as run:
+            with self.assertRaises(subprocess.CalledProcessError):
+                publisher.release_info(self.state)
+            self.assertEqual(run.call_count, 1)
+
+    def test_draft_lookup_rejects_mismatched_tag_id_or_repository(self):
+        tag_error = subprocess.CalledProcessError(1, ["gh", "api"], stderr="gh: Not Found (HTTP 404)")
+        for lookup in [{"databaseId": 42, "tagName": "other"},
+                       {"databaseId": True, "tagName": self.state["tag"]}]:
+            with self.subTest(lookup=lookup), patch.object(publisher, "run", side_effect=[tag_error, json.dumps(lookup)]) as run:
+                with self.assertRaisesRegex(RuntimeError, "unexpected tag or database ID"):
+                    publisher.release_info(self.state)
+                self.assertEqual(run.call_count, 2)
+        release = {"id": 42, "tag_name": self.state["tag"], "draft": True,
+                   "url": "https://api.github.com/repos/example/project/releases/42"}
+        for field, value in [("tag_name", "other"), ("id", 43),
+                             ("url", "https://api.github.com/repos/other/project/releases/42")]:
+            with self.subTest(field=field), patch.object(publisher, "run", side_effect=[
+                    tag_error, json.dumps({"databaseId": 42, "tagName": self.state["tag"]}),
+                    json.dumps({**release, field: value})]):
+                with self.assertRaisesRegex(RuntimeError, "different repository, tag or database ID"):
+                    publisher.release_info(self.state)
+
     def test_public_release_is_verified_without_any_mutation(self):
         release = {"draft": False, "html_url": "https://example.test/release", "assets": []}
         with patch.object(publisher, "release_info", return_value=release), \
