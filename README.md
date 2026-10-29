@@ -23,7 +23,7 @@ Looking for a **yabai alternative** with built-in hotkeys? Yabaibye combines a m
 | **Customizable keyboard shortcuts** | Change the key and modifiers for all 28 actions, with duplicate and registration-conflict checks. |
 | **Adjustable padding and gaps** | Set screen-edge padding and window spacing independently from 0–100 pt. |
 | **Window zoom and floating** | Fill the current desktop's usable area and restore it, or toggle an individual window between tiled and floating. |
-| **Layout persistence** | Remember display, Space, relative frame, tiled/floating state and custom partitions for windows that can be identified after reopening. |
+| **Layout persistence** | Remember display, Space, relative frame and custom partitions for tiled windows that can be identified after reopening. |
 | **In-app updates** | Check for stable releases and download, verify, install and relaunch after user confirmation. |
 | **Foreground-window protection** | Attempt to raise the active window above overlapping ordinary background windows, with up to four attempts and increasing delays per obstruction episode. Recheck both app and window focus before each attempt without changing app focus or window levels. |
 
@@ -85,7 +85,7 @@ Membership persists within the same login session. With **记住窗口布局** (
 
 ## Window memory and updates
 
-**记住窗口布局** (Remember window layouts) is on by default. While management is enabled, Yabaibye remembers each supported window's display, ordinary Space, relative frame, tiled/floating state and custom partition. Records survive window closure. When the app creates a matching window again, Yabaibye restores it without launching other apps or creating/deleting Spaces. Keep macOS automatic Space reordering disabled for predictable desktop numbering.
+**记住窗口布局** (Remember window layouts) is on by default. While management is enabled, Yabaibye remembers only tiled windows' display, ordinary Space, relative frame and custom partition. Floating windows are neither recorded nor restored. Explicitly switching a window to floating removes its saved slot immediately, even while memory is disabled. Legacy floating records are ignored on load and removed on the next save. Records survive window closure. When the app creates a matching window again, Yabaibye restores it without launching other apps or creating/deleting Spaces. Keep macOS automatic Space reordering disabled for predictable desktop numbering.
 
 Application identity and hashes of accessibility window metadata identify recreated windows; raw titles and document paths are not stored. Ambiguous multi-window matches are skipped. Disconnected displays, unavailable Spaces and failed restoration preserve the saved destination. Fullscreen, shared-desktop and non-resizable windows are excluded. Menu controls let you disable memory or clear its local records.
 

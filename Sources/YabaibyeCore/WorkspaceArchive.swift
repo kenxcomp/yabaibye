@@ -64,11 +64,17 @@ public struct WorkspaceRecord: Equatable, Codable {
     public var frame: WorkspaceFrame
     public var floatingFrame: WorkspaceFrame
     public var tiled: Bool
+    public var allowTitleMatch: Bool?
+    public var allowIdentifierMatch: Bool?
+    public var allowBundleFallback: Bool?
     public var updated: Date
     public init(id: String = UUID().uuidString, key: WorkspaceWindowKey, location: WorkspaceLocation,
-                frame: WorkspaceFrame, floatingFrame: WorkspaceFrame, tiled: Bool, updated: Date = Date()) {
+                frame: WorkspaceFrame, floatingFrame: WorkspaceFrame, tiled: Bool, updated: Date = Date(), allowBundleFallback: Bool = false, allowIdentifierMatch: Bool = false, allowTitleMatch: Bool = true) {
         self.id = id; self.key = key; self.location = location; self.frame = frame
         self.floatingFrame = floatingFrame; self.tiled = tiled; self.updated = updated
+        self.allowBundleFallback = allowBundleFallback
+        self.allowIdentifierMatch = allowIdentifierMatch
+        self.allowTitleMatch = allowTitleMatch
     }
 }
 
@@ -81,17 +87,20 @@ public struct WorkspaceSavedLayout: Equatable, Codable {
 public enum WorkspaceMatcher {
     /// Only one-to-one matches are accepted. An app with multiple indistinguishable windows is left alone.
     public static func match(_ windows: [String: WorkspaceWindowKey], records: [WorkspaceRecord],
-                             bindings: [String: String]) -> [String: String] {
+                             bindings: [String: String], excluding: Set<String> = [], allowBundleFallback: Bool = true) -> [String: String] {
         var result = bindings.filter { binding in windows[binding.key] != nil && records.contains(where: { $0.id == binding.value && $0.key.bundleID == windows[binding.key]?.bundleID }) }
         var remaining = records.filter { !Set(result.values).contains($0.id) }
         var pending = windows.filter { result[$0.key] == nil }
         for field: KeyPath<WorkspaceWindowKey, String?> in [\.document, \.identifier, \.title] {
             let candidates = pending.reduce(into: [String: [String]]()) { output, entry in
                 guard let token = entry.value[keyPath: field], !token.isEmpty else { return }
-                let matches = remaining.filter { $0.key.bundleID == entry.value.bundleID && $0.key[keyPath: field] == token }
+                let matches = remaining.filter { $0.key.bundleID == entry.value.bundleID && $0.key[keyPath: field] == token &&
+                    (field != \.identifier || $0.allowIdentifierMatch == true) &&
+                    (field != \.title || $0.allowTitleMatch != false) &&
+                    ($0.key.document == nil || entry.value.document == nil || $0.key.document == entry.value.document) }
                 if matches.count == 1 { output[matches[0].id, default: []].append(entry.key) }
             }
-            for (record, identities) in candidates where identities.count == 1 {
+            for (record, identities) in candidates where identities.count == 1 && !excluding.contains(identities[0]) {
                 result[identities[0]] = record; pending.removeValue(forKey: identities[0])
                 remaining.removeAll { $0.id == record }
             }
@@ -100,8 +109,9 @@ public enum WorkspaceMatcher {
         for bundle in Set(pending.values.map(\.bundleID)) {
             let current = windows.filter { $0.value.bundleID == bundle }
             let saved = records.filter { $0.key.bundleID == bundle }
-            if current.count == 1, saved.count == 1, let identity = current.keys.first,
-               result[identity] == nil, !result.values.contains(saved[0].id) { result[identity] = saved[0].id }
+            if allowBundleFallback, current.count == 1, saved.count == 1, let identity = current.keys.first,
+               result[identity] == nil, !excluding.contains(identity), !result.values.contains(saved[0].id), saved[0].allowBundleFallback == true,
+               (saved[0].key.document == nil || current[identity]?.document == nil || saved[0].key.document == current[identity]?.document) { result[identity] = saved[0].id }
         }
         return result
     }
@@ -118,7 +128,22 @@ public struct WorkspaceArchive: Codable {
         guard let data = defaults.data(forKey: storageKey), data.count < 8_000_000,
               let saved = try? JSONDecoder().decode(Self.self, from: data), saved.records.count <= 2048,
               Set(saved.records.map(\.id)).count == saved.records.count else { return Self() }
-        return saved
+        var tiled = saved
+        for index in tiled.records.indices where tiled.records[index].allowTitleMatch == nil {
+            let key = tiled.records[index].key
+            tiled.records[index].allowTitleMatch = key.title != nil && saved.records.filter {
+                $0.key.bundleID == key.bundleID && $0.key.title == key.title
+            }.count == 1
+        }
+        tiled.removeRecords(Set(saved.records.filter { !$0.tiled }.map(\.id)))
+        return tiled
+    }
+    public mutating func removeRecords(_ ids: Set<String>) {
+        guard !ids.isEmpty else { return }
+        records.removeAll { ids.contains($0.id) }
+        let retained = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0.id) })
+        layouts = layouts.map { WorkspaceSavedLayout(location: $0.location, layout: $0.layout.remapped(using: retained)) }
+            .filter { !$0.layout.ids.isEmpty }
     }
     public func save(to defaults: UserDefaults) {
         let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys

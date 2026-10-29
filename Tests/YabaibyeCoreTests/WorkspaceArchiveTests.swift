@@ -7,7 +7,7 @@ final class WorkspaceArchiveTests: XCTestCase {
     private func record(_ id: String, title: String? = nil, document: String? = nil) -> WorkspaceRecord {
         let frame = WorkspaceFrame(frame: CGRect(x: 10, y: 20, width: 500, height: 400), bounds: CGRect(x: 0, y: 0, width: 1000, height: 800))!
         return WorkspaceRecord(id: id, key: WorkspaceWindowKey(bundleID: "test.app", document: document, title: title),
-                               location: location, frame: frame, floatingFrame: frame, tiled: true)
+                               location: location, frame: frame, floatingFrame: frame, tiled: true, allowBundleFallback: true)
     }
     func testUniqueDocumentMatchesRebuiltIDsWithoutDependingOnEnumerationOrder() {
         let saved = [record("one", document: "doc1"), record("two", document: "doc2")]
@@ -71,4 +71,32 @@ final class WorkspaceArchiveTests: XCTestCase {
         defaults.set(Data("broken".utf8), forKey: WorkspaceArchive.storageKey)
         XCTAssertTrue(WorkspaceArchive.load(from: defaults).records.isEmpty)
     }
+    func testTiledSlotInMultiwindowAppCannotClaimFloatingWindowByBundle() {
+        var tiled = record("tiled", title: "tiled-title")
+        tiled.allowBundleFallback = false
+        XCTAssertTrue(WorkspaceMatcher.match(["float": WorkspaceWindowKey(bundleID: "test.app", title: "float-title")], records: [tiled], bindings: [:]).isEmpty)
+        tiled.allowBundleFallback = true
+        tiled.key.document = "tiled-document"
+        XCTAssertTrue(WorkspaceMatcher.match(["float": WorkspaceWindowKey(bundleID: "test.app", document: "other-document", title: "tiled-title")], records: [tiled], bindings: [:]).isEmpty)
+    }
+
+    func testSharedIdentifierDoesNotBecomeUniqueWhenFloatingSlotIsRemoved() {
+        var tiled = record("tiled", title: "tiled-title")
+        tiled.key.identifier = "generic"
+        tiled.allowBundleFallback = false
+        tiled.allowIdentifierMatch = false
+        XCTAssertTrue(WorkspaceMatcher.match(["float": WorkspaceWindowKey(bundleID: "test.app", identifier: "generic", title: "other-title")], records: [tiled], bindings: [:]).isEmpty)
+        tiled.allowIdentifierMatch = true
+        XCTAssertEqual(WorkspaceMatcher.match(["new": WorkspaceWindowKey(bundleID: "test.app", identifier: "generic", title: "changed")], records: [tiled], bindings: [:]), ["new": "tiled"])
+    }
+
+    func testExplicitFloatStillCompetesWithOtherWindowForIdenticalTitle() {
+        let keys = ["float": WorkspaceWindowKey(bundleID: "test.app", title: "same"),
+                    "other": WorkspaceWindowKey(bundleID: "test.app", title: "same")]
+        XCTAssertTrue(WorkspaceMatcher.match(keys, records: [record("slot", title: "same")], bindings: [:], excluding: ["float"]).isEmpty)
+        var shared = record("slot", title: "same")
+        shared.allowTitleMatch = false; shared.allowBundleFallback = false
+        XCTAssertTrue(WorkspaceMatcher.match(["float": keys["float"]!], records: [shared], bindings: [:]).isEmpty)
+    }
+
 }

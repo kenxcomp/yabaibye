@@ -142,6 +142,7 @@ import YabaibyeCore
         tilingPolicy = policy
         persistence?.saveTilingPolicy(policy)
         enabled = true
+        workspaceMemory?.persistMigration()
         drag.start()
         if managesUserPreferences { UserDefaults.standard.set(true, forKey: "managerEnabled") }
         timer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
@@ -225,6 +226,8 @@ import YabaibyeCore
                         let frame = self.originalFrames[window.identity] ?? window.frame
                         guard try await AX.applyFrames([(window.element, frame)]) else { throw AppFailure("窗口拒绝恢复浮动尺寸。") }
                         policy.setTiled(false, for: window.identity)
+                        self.workspaceMemory?.forget(window)
+                        self.originalFrames.removeValue(forKey: window.identity)
                         self.report("窗口已浮动")
                     } else {
                         guard let frame = AX.frame(window.element) else { throw AppFailure("暂时无法读取浮动窗口尺寸，请重试。") }

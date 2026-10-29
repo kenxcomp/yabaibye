@@ -15,6 +15,7 @@ struct WorkspaceSnapshot {
     var complete: Bool
     var aliveIdentities: Set<String>? = nil
     var unavailableBundles: Set<String> = []
+    var windowCounts: [String: Int] = [:]
 }
 
 /// Unlike the tiler, memory must inspect windows on inactive desktops as well.
@@ -33,6 +34,11 @@ struct WorkspaceSnapshot {
         var result = WorkspaceSnapshot(observations: [], complete: true, aliveIdentities: aliveIdentities)
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular && app.processIdentifier != getpid() && windowPIDs.contains(app.processIdentifier) {
             guard let bundle = app.bundleIdentifier else { continue }
+            // Count all ordinary-level windows, including hidden/minimized ones.
+            // Extra dialogs conservatively disable application-only matching.
+            result.windowCounts[bundle, default: 0] += records.filter {
+                $0[kCGWindowLayer as String] as? Int == 0 && $0[kCGWindowOwnerPID as String] as? Int32 == app.processIdentifier
+            }.count
             let root = AXUIElementCreateApplication(app.processIdentifier)
             AXUIElementSetMessagingTimeout(root, 0.25)
             guard let elements = AX.value(root, kAXWindowsAttribute) as? [AXUIElement] else {
